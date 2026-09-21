@@ -1164,9 +1164,6 @@ func ProvisionerToLinkedca(p provisioner.Interface) (*linkedca.Provisioner, erro
 			Webhooks:     webhooks,
 		}, nil
 	case *provisioner.ACME:
-		if p.AuthorizeByEABPolicy {
-			return nil, errors.New("authorizeByEABPolicy cannot be persisted through linkedca: the linkedca ACME provisioner model has no field for it")
-		}
 		x509Template, sshTemplate, webhooks, err := provisionerOptionsToLinkedca(p.Options)
 		if err != nil {
 			return nil, err

@@ -105,10 +105,6 @@ type ACME struct {
 	// EAB will be verified. If set to false and an EAB is provided, it is
 	// not verified. Defaults to false.
 	RequireEAB bool `json:"requireEAB,omitempty"`
-	// AuthorizeByEABPolicy marks ACME authorizations valid when the bound EAB
-	// policy authorizes every identifier in the order. It is intentionally
-	// opt-in and requires RequireEAB.
-	AuthorizeByEABPolicy bool `json:"authorizeByEABPolicy,omitempty"`
 	// Challenges contains the enabled challenges for this provisioner. If this
 	// value is not set the default http-01, dns-01 and tls-alpn-01 challenges
 	// will be enabled, device-attest-01, wire-oidc-01 and wire-dpop-01 will be
@@ -126,6 +122,62 @@ type ACME struct {
 	Options             *Options `json:"options,omitempty"`
 	attestationRootPool *x509.CertPool
 	ctl                 *Controller
+}
+
+// TrustedACMEPolicyResolver is a runtime-only policy overlay for ACME orders.
+// It is separate from the persisted provisioner model so linkedca/admin
+// reloads cannot drop or change the broker policy.
+type TrustedACMEPolicyResolver interface {
+	EnabledForProvisioner(name string) bool
+}
+
+// TrustedACMEPolicyConfig enables trusted EAB-policy authorization for an
+// explicit set of ACME provisioner names.
+type TrustedACMEPolicyConfig struct {
+	Enabled      bool     `json:"enabled,omitempty"`
+	Provisioners []string `json:"provisioners,omitempty"`
+}
+
+// EnabledForProvisioner implements TrustedACMEPolicyResolver.
+func (c *TrustedACMEPolicyConfig) EnabledForProvisioner(name string) bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	for _, configured := range c.Provisioners {
+		if configured == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks static provisioners when available. Admin-managed
+// deployments may load provisioners later; the order path checks them again
+// and fails closed if RequireEAB is not enabled.
+func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool) error {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	if len(c.Provisioners) == 0 {
+		return errors.New("trusted_eab_policy.enabled requires at least one provisioner")
+	}
+	for _, name := range c.Provisioners {
+		found := false
+		for _, p := range provisioners {
+			if p.GetName() != name {
+				continue
+			}
+			found = true
+			acme, ok := p.(*ACME)
+			if !ok || !acme.RequireEAB {
+				return errors.Errorf("trusted_eab_policy provisioner %q requires requireEAB=true", name)
+			}
+		}
+		if !found && !adminManaged {
+			return errors.Errorf("trusted_eab_policy provisioner %q was not found", name)
+		}
+	}
+	return nil
 }
 
 // GetID returns the provisioner unique identifier.
@@ -182,10 +234,6 @@ func (p *ACME) Init(config Config) (err error) {
 	case p.Name == "":
 		return errors.New("provisioner name cannot be empty")
 	}
-	if p.AuthorizeByEABPolicy && !p.RequireEAB {
-		return errors.New("authorizeByEABPolicy requires requireEAB")
-	}
-
 	for _, c := range p.Challenges {
 		if err := c.Validate(); err != nil {
 			return err

@@ -158,17 +158,18 @@ type ASN1DN struct {
 // cas.Options.
 type AuthConfig struct {
 	*cas.Options
-	AuthorityID          string                `json:"authorityId,omitempty"`
-	DeploymentType       string                `json:"deploymentType,omitempty"`
-	Provisioners         provisioner.List      `json:"provisioners,omitempty"`
-	Admins               []*linkedca.Admin     `json:"-"`
-	Template             *ASN1DN               `json:"template,omitempty"`
-	Claims               *provisioner.Claims   `json:"claims,omitempty"`
-	Policy               *policy.Options       `json:"policy,omitempty"`
-	DisableIssuedAtCheck bool                  `json:"disableIssuedAtCheck,omitempty"`
-	Backdate             *provisioner.Duration `json:"backdate,omitempty"`
-	EnableAdmin          bool                  `json:"enableAdmin,omitempty"`
-	DisableGetSSHHosts   bool                  `json:"disableGetSSHHosts,omitempty"`
+	AuthorityID          string                               `json:"authorityId,omitempty"`
+	DeploymentType       string                               `json:"deploymentType,omitempty"`
+	Provisioners         provisioner.List                     `json:"provisioners,omitempty"`
+	Admins               []*linkedca.Admin                    `json:"-"`
+	Template             *ASN1DN                              `json:"template,omitempty"`
+	Claims               *provisioner.Claims                  `json:"claims,omitempty"`
+	Policy               *policy.Options                      `json:"policy,omitempty"`
+	DisableIssuedAtCheck bool                                 `json:"disableIssuedAtCheck,omitempty"`
+	Backdate             *provisioner.Duration                `json:"backdate,omitempty"`
+	EnableAdmin          bool                                 `json:"enableAdmin,omitempty"`
+	DisableGetSSHHosts   bool                                 `json:"disableGetSSHHosts,omitempty"`
+	TrustedEABPolicy     *provisioner.TrustedACMEPolicyConfig `json:"trusted_eab_policy,omitempty"`
 }
 
 // init initializes the required fields in the AuthConfig if they are not
@@ -205,6 +206,9 @@ func (c *AuthConfig) Validate(provisioner.Audiences) error {
 	}
 	if k8sCount > 1 {
 		return errors.New("cannot have more than one kubernetes service account provisioner")
+	}
+	if err := c.TrustedEABPolicy.Validate(c.Provisioners, c.EnableAdmin); err != nil {
+		return err
 	}
 
 	if c.Backdate.Duration < 0 {

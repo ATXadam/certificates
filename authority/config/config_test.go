@@ -9,8 +9,31 @@ import (
 	"github.com/smallstep/assert"
 	"github.com/smallstep/certificates/authority/provisioner"
 	_ "github.com/smallstep/certificates/cas"
+	"github.com/stretchr/testify/require"
 	"go.step.sm/crypto/jose"
 )
+
+func TestTrustedEABPolicyValidation(t *testing.T) {
+	acme := &provisioner.ACME{Type: "ACME", Name: "acme", RequireEAB: true}
+	configured := &AuthConfig{
+		Provisioners:     provisioner.List{acme},
+		TrustedEABPolicy: &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme"}},
+	}
+	require.NoError(t, configured.Validate(provisioner.Audiences{}))
+
+	acme.RequireEAB = false
+	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "requires requireEAB=true")
+
+	configured.TrustedEABPolicy.Provisioners = []string{"missing"}
+	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "was not found")
+}
+
+func TestTrustedEABPolicyResolverDefaultsClosedAndScopesByName(t *testing.T) {
+	resolver := &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme"}}
+	require.True(t, resolver.EnabledForProvisioner("acme"))
+	require.False(t, resolver.EnabledForProvisioner("other"))
+	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).EnabledForProvisioner("acme"))
+}
 
 func TestConfigValidate(t *testing.T) {
 	maxjwk, err := jose.ReadKey("../testdata/secrets/max_pub.jwk")
