@@ -22,6 +22,17 @@ import (
 	"github.com/smallstep/certificates/db"
 )
 
+func TestProvisionerToLinkedcaRejectsNonDurableTrustedACMEOption(t *testing.T) {
+	_, err := ProvisionerToLinkedca(&provisioner.ACME{
+		ID:                   "acme-id",
+		Type:                 "ACME",
+		Name:                 "acme",
+		RequireEAB:           true,
+		AuthorizeByEABPolicy: true,
+	})
+	require.ErrorContains(t, err, "authorizeByEABPolicy cannot be persisted through linkedca")
+}
+
 func TestGetEncryptedKey(t *testing.T) {
 	type ek struct {
 		a    *Authority

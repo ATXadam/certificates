@@ -227,7 +227,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, identifier := range nor.Identifiers {
-		if trustedPolicy && identifier.Type != acme.IP && identifier.Type != acme.DNS {
+		if trustedPolicy && identifier.Type != acme.DNS {
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
 			return
 		}
@@ -324,8 +324,10 @@ func hasNonEmptyACMEPolicy(eak *acme.ExternalAccountKey) bool {
 		return false
 	}
 	x509Policy := eak.Policy.X509
-	return len(x509Policy.Allowed.DNSNames) > 0 || len(x509Policy.Allowed.IPRanges) > 0 ||
-		len(x509Policy.Denied.DNSNames) > 0 || len(x509Policy.Denied.IPRanges) > 0 || x509Policy.AllowWildcardNames
+	// Trusted authorization substitutes for downstream DCV. It therefore needs
+	// an explicit positive DNS allow-list; deny-only, wildcard-only, and
+	// IP-only policies must not expand the trust boundary.
+	return len(x509Policy.Allowed.DNSNames) > 0
 }
 
 func trimIfWildcard(value string) (string, bool) {
