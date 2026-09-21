@@ -149,6 +149,7 @@ func TestHandler_validateExternalAccountBinding(t *testing.T) {
 			return test{
 				db: &acme.MockDB{
 					MockGetExternalAccountKey: func(ctx context.Context, provisionerName, keyID string) (*acme.ExternalAccountKey, error) {
+						assert.Equals(t, provisionerName, provID)
 						return &acme.ExternalAccountKey{
 							ID:            "eakID",
 							ProvisionerID: provID,

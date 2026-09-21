@@ -629,6 +629,7 @@ func TestHandler_NewAccount(t *testing.T) {
 						acc.ID = "accountID"
 						assert.Equals(t, acc.Contact, nar.Contact)
 						assert.Equals(t, acc.Key, jwk)
+						assert.Equals(t, acc.ProvisionerID, prov.GetID())
 						return nil
 					},
 					MockGetExternalAccountKey: func(ctx context.Context, provisionerName, keyID string) (*acme.ExternalAccountKey, error) {
@@ -790,6 +791,7 @@ func TestHandler_NewAccount(t *testing.T) {
 						return nil
 					},
 					MockGetExternalAccountKey: func(ctx context.Context, provisionerName, keyID string) (*acme.ExternalAccountKey, error) {
+						assert.Equals(t, provisionerName, prov.GetID())
 						return &acme.ExternalAccountKey{
 							ID:            "eakID",
 							ProvisionerID: provID,
@@ -799,6 +801,7 @@ func TestHandler_NewAccount(t *testing.T) {
 						}, nil
 					},
 					MockUpdateExternalAccountKey: func(ctx context.Context, provisionerName string, eak *acme.ExternalAccountKey) error {
+						assert.Equals(t, provisionerName, prov.GetID())
 						return nil
 					},
 				},
