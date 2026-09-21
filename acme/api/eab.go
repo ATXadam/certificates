@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 
 	"go.step.sm/crypto/jose"
 
@@ -125,6 +126,13 @@ func validateEABJWS(ctx context.Context, jws *jose.JSONWebSignature) (string, *a
 	}
 
 	header := jws.Signatures[0].Protected
+	slog.Info("acme eab structure",
+		"kid", header.KeyID,
+		"alg", header.Algorithm,
+		"protected_url", header.ExtraHeaders["url"],
+		"signature_length", len(jws.Signatures[0].Signature),
+		"payload_length", len(jws.UnsafePayloadWithoutVerification()),
+	)
 	algorithm := header.Algorithm
 	keyID := header.KeyID
 	nonce := header.Nonce
