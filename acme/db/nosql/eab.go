@@ -20,13 +20,14 @@ var externalAccountKeyMutex sync.RWMutex
 var referencesByProvisionerIndexMutex sync.Mutex
 
 type dbExternalAccountKey struct {
-	ID            string    `json:"id"`
-	ProvisionerID string    `json:"provisionerID"`
-	Reference     string    `json:"reference"`
-	AccountID     string    `json:"accountID,omitempty"`
-	HmacKey       []byte    `json:"key"`
-	CreatedAt     time.Time `json:"createdAt"`
-	BoundAt       time.Time `json:"boundAt"`
+	ID            string       `json:"id"`
+	ProvisionerID string       `json:"provisionerID"`
+	Reference     string       `json:"reference"`
+	AccountID     string       `json:"accountID,omitempty"`
+	HmacKey       []byte       `json:"key"`
+	CreatedAt     time.Time    `json:"createdAt"`
+	BoundAt       time.Time    `json:"boundAt"`
+	Policy        *acme.Policy `json:"policy,omitempty"`
 }
 
 type dbExternalAccountKeyReference struct {
@@ -102,6 +103,7 @@ func (db *DB) CreateExternalAccountKey(ctx context.Context, provisionerID, refer
 		HmacKey:       dbeak.HmacKey,
 		CreatedAt:     dbeak.CreatedAt,
 		BoundAt:       dbeak.BoundAt,
+		Policy:        dbeak.Policy,
 	}, nil
 }
 
@@ -127,6 +129,7 @@ func (db *DB) GetExternalAccountKey(ctx context.Context, provisionerID, keyID st
 		HmacKey:       dbeak.HmacKey,
 		CreatedAt:     dbeak.CreatedAt,
 		BoundAt:       dbeak.BoundAt,
+		Policy:        dbeak.Policy,
 	}, nil
 }
 
@@ -199,6 +202,7 @@ func (db *DB) GetExternalAccountKeys(ctx context.Context, provisionerID, cursor 
 			AccountID:     eak.AccountID,
 			CreatedAt:     eak.CreatedAt,
 			BoundAt:       eak.BoundAt,
+			Policy:        eak.Policy,
 		})
 	}
 
@@ -226,11 +230,51 @@ func (db *DB) GetExternalAccountKeyByReference(ctx context.Context, provisionerI
 		return nil, errors.Wrapf(err, "error unmarshaling ACME EAB key for reference %s", reference)
 	}
 
-	return db.GetExternalAccountKey(ctx, provisionerID, dbExternalAccountKeyReference.ExternalAccountKeyID)
+	dbeak, err := db.getDBExternalAccountKey(ctx, dbExternalAccountKeyReference.ExternalAccountKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if dbeak.ProvisionerID != provisionerID {
+		return nil, acme.NewError(acme.ErrorUnauthorizedType, "provisioner does not match provisioner for which the EAB key was created")
+	}
+	return &acme.ExternalAccountKey{
+		ID: dbeak.ID, ProvisionerID: dbeak.ProvisionerID, Reference: dbeak.Reference,
+		AccountID: dbeak.AccountID, HmacKey: dbeak.HmacKey, CreatedAt: dbeak.CreatedAt,
+		BoundAt: dbeak.BoundAt, Policy: dbeak.Policy,
+	}, nil
 }
 
-func (db *DB) GetExternalAccountKeyByAccountID(context.Context, string, string) (*acme.ExternalAccountKey, error) {
-	//nolint:nilnil // legacy
+func (db *DB) GetExternalAccountKeyByAccountID(ctx context.Context, provisionerID, accountID string) (*acme.ExternalAccountKey, error) {
+	externalAccountKeyMutex.RLock()
+	defer externalAccountKeyMutex.RUnlock()
+
+	data, err := db.db.Get(externalAccountKeyIDsByProvisionerIDTable, []byte(provisionerID))
+	if err != nil {
+		if nosqlDB.IsErrNotFound(err) {
+			return nil, nil
+		}
+		return nil, errors.Wrapf(err, "error loading ACME EAB Key IDs for provisioner %s", provisionerID)
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return nil, errors.Wrapf(err, "error unmarshaling ACME EAB Key IDs for provisioner %s", provisionerID)
+	}
+	for _, id := range ids {
+		key, err := db.getDBExternalAccountKey(ctx, id)
+		if err != nil {
+			if nosqlDB.IsErrNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if key.AccountID == accountID {
+			return &acme.ExternalAccountKey{
+				ID: key.ID, ProvisionerID: key.ProvisionerID, Reference: key.Reference,
+				AccountID: key.AccountID, HmacKey: key.HmacKey, CreatedAt: key.CreatedAt,
+				BoundAt: key.BoundAt, Policy: key.Policy,
+			}, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -263,6 +307,7 @@ func (db *DB) UpdateExternalAccountKey(ctx context.Context, provisionerID string
 		HmacKey:       eak.HmacKey,
 		CreatedAt:     eak.CreatedAt,
 		BoundAt:       eak.BoundAt,
+		Policy:        eak.Policy,
 	}
 
 	return db.save(ctx, nu.ID, nu, old, "external_account_key", externalAccountKeyTable)

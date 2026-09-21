@@ -105,6 +105,10 @@ type ACME struct {
 	// EAB will be verified. If set to false and an EAB is provided, it is
 	// not verified. Defaults to false.
 	RequireEAB bool `json:"requireEAB,omitempty"`
+	// AuthorizeByEABPolicy marks ACME authorizations valid when the bound EAB
+	// policy authorizes every identifier in the order. It is intentionally
+	// opt-in and requires RequireEAB.
+	AuthorizeByEABPolicy bool `json:"authorizeByEABPolicy,omitempty"`
 	// Challenges contains the enabled challenges for this provisioner. If this
 	// value is not set the default http-01, dns-01 and tls-alpn-01 challenges
 	// will be enabled, device-attest-01, wire-oidc-01 and wire-dpop-01 will be
@@ -177,6 +181,9 @@ func (p *ACME) Init(config Config) (err error) {
 		return errors.New("provisioner type cannot be empty")
 	case p.Name == "":
 		return errors.New("provisioner name cannot be empty")
+	}
+	if p.AuthorizeByEABPolicy && !p.RequireEAB {
+		return errors.New("authorizeByEABPolicy requires requireEAB")
 	}
 
 	for _, c := range p.Challenges {

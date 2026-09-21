@@ -214,6 +214,11 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	trustedPolicy := acmeProv.AuthorizeByEABPolicy
+	if trustedPolicy && !hasNonEmptyACMEPolicy(eak) {
+		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires a bound EAB with a non-empty policy"))
+		return
+	}
 
 	acmePolicy, err := newACMEPolicyEngine(eak)
 	if err != nil {
@@ -222,6 +227,10 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, identifier := range nor.Identifiers {
+		if trustedPolicy && identifier.Type != acme.IP && identifier.Type != acme.DNS {
+			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
+			return
+		}
 		// evaluate the ACME account level policy
 		if err = isIdentifierAllowed(acmePolicy, identifier); err != nil {
 			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
@@ -260,7 +269,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:  o.ExpiresAt,
 			Status:     acme.StatusPending,
 		}
-		if err := newAuthorization(ctx, az); err != nil {
+		if err := newAuthorizationWithTrust(ctx, az, trustedPolicy); err != nil {
 			render.Error(w, r, err)
 			return
 		}
@@ -310,6 +319,15 @@ func newACMEPolicyEngine(eak *acme.ExternalAccountKey) (policy.X509Policy, error
 	return policy.NewX509PolicyEngine(eak.Policy)
 }
 
+func hasNonEmptyACMEPolicy(eak *acme.ExternalAccountKey) bool {
+	if eak == nil || eak.Policy == nil {
+		return false
+	}
+	x509Policy := eak.Policy.X509
+	return len(x509Policy.Allowed.DNSNames) > 0 || len(x509Policy.Allowed.IPRanges) > 0 ||
+		len(x509Policy.Denied.DNSNames) > 0 || len(x509Policy.Denied.IPRanges) > 0 || x509Policy.AllowWildcardNames
+}
+
 func trimIfWildcard(value string) (string, bool) {
 	if strings.HasPrefix(value, "*.") {
 		return strings.TrimPrefix(value, "*."), true
@@ -318,6 +336,11 @@ func trimIfWildcard(value string) (string, bool) {
 }
 
 func newAuthorization(ctx context.Context, az *acme.Authorization) error {
+	return newAuthorizationWithTrust(ctx, az, false)
+}
+
+func newAuthorizationWithTrust(ctx context.Context, az *acme.Authorization, trusted bool) error {
+	db := acme.MustDatabaseFromContext(ctx)
 	value, isWildcard := trimIfWildcard(az.Identifier.Value)
 	az.Wildcard = isWildcard
 	az.Identifier = acme.Identifier{
@@ -328,12 +351,16 @@ func newAuthorization(ctx context.Context, az *acme.Authorization) error {
 	chTypes := challengeTypes(az)
 
 	var err error
+	if trusted {
+		az.Status = acme.StatusValid
+		return db.CreateAuthorization(ctx, az)
+	}
+
 	az.Token, err = randutil.Alphanumeric(32)
 	if err != nil {
 		return acme.WrapErrorISE(err, "error generating random alphanumeric ID")
 	}
 
-	db := acme.MustDatabaseFromContext(ctx)
 	prov := acme.MustProvisionerFromContext(ctx)
 	az.Challenges = make([]*acme.Challenge, 0, len(chTypes))
 	for _, typ := range chTypes {

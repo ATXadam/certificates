@@ -209,12 +209,10 @@ func TestHandler_CreateExternalAccountKey(t *testing.T) {
 			ctx := context.WithValue(context.Background(), chi.RouteCtxKey, chiCtx)
 			return test{
 				ctx:        ctx,
-				statusCode: 501,
+				statusCode: 400,
 				err: &admin.Error{
-					Type:    admin.ErrorNotImplementedType.String(),
-					Status:  http.StatusNotImplemented,
-					Message: "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm",
-					Detail:  "not implemented",
+					Status:  http.StatusBadRequest,
+					Message: "The request could not be completed: error decoding json.",
 				},
 			}
 		},
@@ -262,12 +260,12 @@ func TestHandler_DeleteExternalAccountKey(t *testing.T) {
 			ctx := context.WithValue(context.Background(), chi.RouteCtxKey, chiCtx)
 			return test{
 				ctx:        ctx,
-				statusCode: 501,
+				statusCode: 500,
 				err: &admin.Error{
-					Type:    admin.ErrorNotImplementedType.String(),
-					Status:  http.StatusNotImplemented,
-					Message: "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm",
-					Detail:  "not implemented",
+					Type:    admin.ErrorServerInternalType.String(),
+					Status:  http.StatusInternalServerError,
+					Message: "ACME provisioner is not in the request context",
+					Detail:  "the server experienced an internal error",
 				},
 			}
 		},
@@ -315,13 +313,13 @@ func TestHandler_GetExternalAccountKeys(t *testing.T) {
 			ctx := context.WithValue(context.Background(), chi.RouteCtxKey, chiCtx)
 			return test{
 				ctx:        ctx,
-				statusCode: 501,
+				statusCode: 500,
 				req:        req,
 				err: &admin.Error{
-					Type:    admin.ErrorNotImplementedType.String(),
-					Status:  http.StatusNotImplemented,
-					Message: "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm",
-					Detail:  "not implemented",
+					Type:    admin.ErrorServerInternalType.String(),
+					Status:  http.StatusInternalServerError,
+					Message: "ACME provisioner is not in the request context",
+					Detail:  "the server experienced an internal error",
 				},
 			}
 		},
