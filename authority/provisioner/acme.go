@@ -162,6 +162,9 @@ func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool)
 		return errors.New("trusted_eab_policy.enabled requires at least one provisioner")
 	}
 	for _, name := range c.Provisioners {
+		if name == "" {
+			return errors.New("trusted_eab_policy provisioner name cannot be empty")
+		}
 		found := false
 		for _, p := range provisioners {
 			if p.GetName() != name {
