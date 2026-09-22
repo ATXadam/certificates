@@ -605,7 +605,7 @@ func FinalizeOrder(w http.ResponseWriter, r *http.Request) {
 var asyncFinalizations sync.Map
 
 func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr *x509.CertificateRequest, ca acme.CertificateAuthority, prov acme.Provisioner) {
-	if _, loaded := asyncFinalizations.LoadOrStore(orderID, struct{}{}); loaded {
+	if !claimAsyncFinalization(orderID) {
 		return
 	}
 	go func() {
@@ -625,6 +625,8 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			bgOrder.Trusted = false
 			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
 				slog.Error("async finalization: failed to persist policy failure", "order", orderID, "err", updateErr)
+			} else {
+				notifyOrderFinalized(ca, orderID)
 			}
 			return
 		}
@@ -636,11 +638,36 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			bgOrder.Trusted = false
 			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
 				slog.Error("async finalization: failed to persist failure", "order", orderID, "err", updateErr)
+			} else {
+				notifyOrderFinalized(ca, orderID)
 			}
 			return
 		}
+		notifyOrderFinalized(ca, orderID)
 		slog.Info("async finalization succeeded", "order", orderID)
 	}()
+}
+
+func claimAsyncFinalization(orderID string) bool {
+	_, loaded := asyncFinalizations.LoadOrStore(orderID, struct{}{})
+	return !loaded
+}
+
+type acmeOrderFinalizationObserver interface {
+	ACMEOrderFinalized(requestID string) error
+}
+
+// notifyOrderFinalized runs only after the order's terminal state has been
+// durably written. Failure to remove recovery metadata is safe: stale entries
+// are preferable to losing a mapping before the local commit.
+func notifyOrderFinalized(ca acme.CertificateAuthority, requestID string) {
+	observer, ok := ca.(acmeOrderFinalizationObserver)
+	if !ok {
+		return
+	}
+	if err := observer.ACMEOrderFinalized(requestID); err != nil {
+		slog.Error("async finalization: failed to clean recovery metadata", "order", requestID, "err", err)
+	}
 }
 
 func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, ca acme.CertificateAuthority, prov acme.Provisioner) error {
