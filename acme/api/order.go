@@ -479,6 +479,8 @@ func GetOrder(w http.ResponseWriter, r *http.Request) {
 		if err := validateCurrentOrderPolicy(ctx, o, db, ca, prov); err != nil {
 			o.Status = acme.StatusInvalid
 			o.Error = acme.NewError(acme.ErrorUnauthorizedType, "current policy rejected processing order")
+			o.CSR = nil
+			o.Trusted = false
 			if updateErr := db.UpdateOrder(ctx, o); updateErr != nil {
 				render.Error(w, r, acme.WrapErrorISE(updateErr, "error updating policy-rejected order"))
 				return
@@ -486,6 +488,7 @@ func GetOrder(w http.ResponseWriter, r *http.Request) {
 		} else if len(o.CSR) == 0 {
 			o.Status = acme.StatusInvalid
 			o.Error = acme.NewError(acme.ErrorServerInternalType, "processing order cannot be recovered: CSR is unavailable")
+			o.Trusted = false
 			if err := db.UpdateOrder(ctx, o); err != nil {
 				render.Error(w, r, acme.WrapErrorISE(err, "error updating unrecoverable order"))
 				return
@@ -493,6 +496,8 @@ func GetOrder(w http.ResponseWriter, r *http.Request) {
 		} else if csr, parseErr := x509.ParseCertificateRequest(o.CSR); parseErr != nil {
 			o.Status = acme.StatusInvalid
 			o.Error = acme.NewError(acme.ErrorServerInternalType, "processing order cannot be recovered: invalid CSR")
+			o.CSR = nil
+			o.Trusted = false
 			if err := db.UpdateOrder(ctx, o); err != nil {
 				render.Error(w, r, acme.WrapErrorISE(err, "error updating unrecoverable order"))
 				return
@@ -616,6 +621,8 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			slog.Error("async finalization rejected by current policy", "order", orderID, "err", err)
 			bgOrder.Status = acme.StatusInvalid
 			bgOrder.Error = acme.NewError(acme.ErrorUnauthorizedType, "current policy rejected order")
+			bgOrder.CSR = nil
+			bgOrder.Trusted = false
 			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
 				slog.Error("async finalization: failed to persist policy failure", "order", orderID, "err", updateErr)
 			}
@@ -625,6 +632,8 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			slog.Error("async finalization failed", "order", orderID, "err", err)
 			bgOrder.Status = acme.StatusInvalid
 			bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
+			bgOrder.CSR = nil
+			bgOrder.Trusted = false
 			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
 				slog.Error("async finalization: failed to persist failure", "order", orderID, "err", updateErr)
 			}

@@ -92,6 +92,8 @@ func (o *Order) UpdateStatus(ctx context.Context, db DB) error {
 		if now.After(o.ExpiresAt) {
 			o.Status = StatusInvalid
 			o.Error = NewError(ErrorMalformedType, "order has expired")
+			o.CSR = nil
+			o.Trusted = false
 			break
 		}
 		return nil
@@ -345,6 +347,8 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 
 	o.CertificateID = cert.ID
 	o.Status = StatusValid
+	o.CSR = nil
+	o.Trusted = false
 
 	if err = db.UpdateOrder(ctx, o); err != nil {
 		return WrapErrorISE(err, "error updating order %s", o.ID)
