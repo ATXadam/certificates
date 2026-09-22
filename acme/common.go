@@ -76,6 +76,7 @@ type Provisioner interface {
 	IsAttestationFormatEnabled(ctx context.Context, format provisioner.ACMEAttestationFormat) bool
 	GetAttestationRoots() (*x509.CertPool, bool)
 	GetID() string
+	GetIDForToken() string
 	GetName() string
 	DefaultTLSCertDuration() time.Duration
 	GetOptions() *provisioner.Options
@@ -112,6 +113,7 @@ type MockProvisioner struct {
 	Mret1                     interface{}
 	Merr                      error
 	MgetID                    func() string
+	MgetIDForToken            func() string
 	MgetName                  func() string
 	MauthorizeOrderIdentifier func(ctx context.Context, identifier provisioner.ACMEIdentifier) error
 	MauthorizeSign            func(ctx context.Context, ott string) ([]provisioner.SignOption, error)
@@ -200,4 +202,12 @@ func (m *MockProvisioner) GetID() string {
 		return m.MgetID()
 	}
 	return m.Mret1.(string)
+}
+
+// GetIDForToken mock
+func (m *MockProvisioner) GetIDForToken() string {
+	if m.MgetIDForToken != nil {
+		return m.MgetIDForToken()
+	}
+	return m.GetID()
 }

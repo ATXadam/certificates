@@ -210,7 +210,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 
 	var eak *acme.ExternalAccountKey
 	if acmeProv.RequireEAB {
-		if eak, err = db.GetExternalAccountKeyByAccountID(ctx, prov.GetID(), acc.ID); err != nil {
+		if eak, err = db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), acc.ID); err != nil {
 			render.Error(w, r, acme.WrapErrorISE(err, "error retrieving external account binding key"))
 			return
 		}
@@ -667,7 +667,7 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 	if !ok || resolverCA.GetTrustedACMEPolicyResolver() == nil || !resolverCA.GetTrustedACMEPolicyResolver().EnabledForProvisioner(acmeProv.GetName()) {
 		return acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization is no longer enabled")
 	}
-	eak, err := db.GetExternalAccountKeyByAccountID(ctx, prov.GetID(), o.AccountID)
+	eak, err := db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), o.AccountID)
 	if err != nil {
 		return acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable")
 	}

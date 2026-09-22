@@ -51,7 +51,7 @@ func validateExternalAccountBinding(ctx context.Context, nar *NewAccountRequest)
 	}
 
 	db := acme.MustDatabaseFromContext(ctx)
-	externalAccountKey, err := db.GetExternalAccountKey(ctx, acmeProv.GetID(), keyID)
+	externalAccountKey, err := db.GetExternalAccountKey(ctx, acmeProv.GetIDForToken(), keyID)
 	if err != nil {
 		var ae *acme.Error
 		if errors.As(err, &ae) {

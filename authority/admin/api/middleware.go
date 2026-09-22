@@ -110,19 +110,21 @@ func loadExternalAccountKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		acmeDB := acme.MustDatabaseFromContext(ctx)
+		provisionerID, err := acmeProvisionerID(ctx)
+		if err != nil {
+			render.Error(w, r, admin.WrapErrorISE(err, "error resolving ACME protocol provisioner ID"))
+			return
+		}
 
 		reference := chi.URLParam(r, "reference")
 		keyID := chi.URLParam(r, "keyID")
 
-		var (
-			eak *acme.ExternalAccountKey
-			err error
-		)
+		var eak *acme.ExternalAccountKey
 
 		if keyID != "" {
-			eak, err = acmeDB.GetExternalAccountKey(ctx, acmeProvisionerID(ctx), keyID)
+			eak, err = acmeDB.GetExternalAccountKey(ctx, provisionerID, keyID)
 		} else {
-			eak, err = acmeDB.GetExternalAccountKeyByReference(ctx, acmeProvisionerID(ctx), reference)
+			eak, err = acmeDB.GetExternalAccountKeyByReference(ctx, provisionerID, reference)
 		}
 
 		if err != nil {

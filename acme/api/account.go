@@ -149,7 +149,7 @@ func NewAccount(w http.ResponseWriter, r *http.Request) {
 				render.Error(w, r, err)
 				return
 			}
-			if err := db.UpdateExternalAccountKey(ctx, prov.GetID(), eak); err != nil {
+			if err := db.UpdateExternalAccountKey(ctx, prov.GetIDForToken(), eak); err != nil {
 				render.Error(w, r, acme.WrapErrorISE(err, "error updating external account binding key"))
 				return
 			}

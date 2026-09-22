@@ -95,13 +95,18 @@ func (h *acmeAdminResponder) GetExternalAccountKeys(w http.ResponseWriter, r *ht
 		render.Error(w, r, err)
 		return
 	}
+	provisionerID, err := acmeProvisionerID(ctx)
+	if err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error resolving ACME protocol provisioner ID"))
+		return
+	}
 	db, err := acmeDatabaseFromContext(ctx)
 	if err != nil {
 		render.Error(w, r, err)
 		return
 	}
 	if reference := chi.URLParam(r, "reference"); reference != "" {
-		key, err := db.GetExternalAccountKeyByReference(ctx, acmeProvisionerID(ctx), reference)
+		key, err := db.GetExternalAccountKeyByReference(ctx, provisionerID, reference)
 		if err != nil {
 			render.Error(w, r, admin.WrapErrorISE(err, "error retrieving ACME EAB key"))
 			return
@@ -118,7 +123,7 @@ func (h *acmeAdminResponder) GetExternalAccountKeys(w http.ResponseWriter, r *ht
 		render.Error(w, r, admin.WrapError(admin.ErrorBadRequestType, err, "error parsing cursor and limit"))
 		return
 	}
-	keys, next, err := db.GetExternalAccountKeys(ctx, acmeProvisionerID(ctx), cursor, limit)
+	keys, next, err := db.GetExternalAccountKeys(ctx, provisionerID, cursor, limit)
 	if err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error retrieving ACME EAB keys"))
 		return
@@ -145,12 +150,17 @@ func (h *acmeAdminResponder) CreateExternalAccountKey(w http.ResponseWriter, r *
 		render.Error(w, r, err)
 		return
 	}
+	provisionerID, err := acmeProvisionerID(r.Context())
+	if err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error resolving ACME protocol provisioner ID"))
+		return
+	}
 	db, err := acmeDatabaseFromContext(r.Context())
 	if err != nil {
 		render.Error(w, r, err)
 		return
 	}
-	key, err := db.CreateExternalAccountKey(r.Context(), acmeProvisionerID(r.Context()), req.Reference)
+	key, err := db.CreateExternalAccountKey(r.Context(), provisionerID, req.Reference)
 	if err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error creating ACME EAB key"))
 		return
@@ -164,12 +174,17 @@ func (h *acmeAdminResponder) DeleteExternalAccountKey(w http.ResponseWriter, r *
 		render.Error(w, r, err)
 		return
 	}
+	provisionerID, err := acmeProvisionerID(r.Context())
+	if err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error resolving ACME protocol provisioner ID"))
+		return
+	}
 	db, err := acmeDatabaseFromContext(r.Context())
 	if err != nil {
 		render.Error(w, r, err)
 		return
 	}
-	if err := db.DeleteExternalAccountKey(r.Context(), acmeProvisionerID(r.Context()), chi.URLParam(r, "id")); err != nil {
+	if err := db.DeleteExternalAccountKey(r.Context(), provisionerID, chi.URLParam(r, "id")); err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error deleting ACME EAB key"))
 		return
 	}

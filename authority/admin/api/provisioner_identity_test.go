@@ -18,11 +18,12 @@ func TestAcmeProvisionerIDUsesRuntimeIdentity(t *testing.T) {
 
 	ctx := linkedca.NewContextWithProvisioner(context.Background(), adminRecord)
 	ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
-		MgetID:   func() string { return "acme/acme" },
-		MgetName: func() string { return "acme" },
+		MgetID:         func() string { return "generated-admin-id" },
+		MgetIDForToken: func() string { return "acme/acme" },
+		MgetName:       func() string { return "acme" },
 	})
 
-	if got := acmeProvisionerID(ctx); got != "acme/acme" {
+	if got, err := acmeProvisionerID(ctx); err != nil || got != "acme/acme" {
 		t.Fatalf("acmeProvisionerID() = %q, want %q", got, "acme/acme")
 	}
 }
@@ -31,18 +32,35 @@ func TestAcmeProvisionerIDPreservesExplicitRuntimeIdentity(t *testing.T) {
 	adminRecord := &linkedca.Provisioner{Id: "generated-admin-id", Name: "acme"}
 	ctx := linkedca.NewContextWithProvisioner(context.Background(), adminRecord)
 	ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
-		MgetID: func() string { return "explicit-acme-id" },
+		MgetID:         func() string { return "database-id" },
+		MgetIDForToken: func() string { return "acme/internal" },
 	})
 
-	if got := acmeProvisionerID(ctx); got != "explicit-acme-id" {
-		t.Fatalf("acmeProvisionerID() = %q, want %q", got, "explicit-acme-id")
+	if got, err := acmeProvisionerID(ctx); err != nil || got != "acme/internal" {
+		t.Fatalf("acmeProvisionerID() = %q, want %q; err=%v", got, "acme/internal", err)
 	}
 }
 
 func TestAcmeProvisionerIDLegacyContextFallback(t *testing.T) {
-	ctx := linkedca.NewContextWithProvisioner(context.Background(), &linkedca.Provisioner{Id: "legacy-id"})
-	if got := acmeProvisionerID(ctx); got != "legacy-id" {
-		t.Fatalf("acmeProvisionerID() fallback = %q, want %q", got, "legacy-id")
+	ctx := linkedca.NewContextWithProvisioner(context.Background(), &linkedca.Provisioner{
+		Id:   "generated-linkedca-id",
+		Name: "acme",
+		Details: &linkedca.ProvisionerDetails{
+			Data: &linkedca.ProvisionerDetails_ACME{ACME: &linkedca.ACMEProvisioner{}},
+		},
+	})
+	if got, err := acmeProvisionerID(ctx); err != nil || got != "acme/acme" {
+		t.Fatalf("acmeProvisionerID() = %q, want %q; err=%v", got, "acme/acme", err)
+	}
+}
+
+func TestAcmeProvisionerIDRejectsNonACMEFallback(t *testing.T) {
+	ctx := linkedca.NewContextWithProvisioner(context.Background(), &linkedca.Provisioner{
+		Id:   "generated-linkedca-id",
+		Name: "admin",
+	})
+	if got, err := acmeProvisionerID(ctx); err == nil || got != "" {
+		t.Fatalf("acmeProvisionerID() = %q, %v; want non-ACME error", got, err)
 	}
 }
 
