@@ -70,7 +70,7 @@ func Route(r api.Router, options ...RouterOption) {
 	}
 
 	acmePolicyMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
-		return authnz(disabledInStandalone(loadProvisionerByName(requireEABEnabled(loadExternalAccountKey(next)))))
+		return authnz(enabledInStandalone(loadProvisionerByName(requireEABEnabled(loadExternalAccountKey(next)))))
 	}
 
 	webhookMiddleware := func(next http.HandlerFunc) http.HandlerFunc {

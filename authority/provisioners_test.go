@@ -22,6 +22,17 @@ import (
 	"github.com/smallstep/certificates/db"
 )
 
+func TestProvisionerToLinkedcaDoesNotPersistRuntimeTrustedACMEOption(t *testing.T) {
+	got, err := ProvisionerToLinkedca(&provisioner.ACME{
+		ID:         "acme-id",
+		Type:       "ACME",
+		Name:       "acme",
+		RequireEAB: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.GetDetails().GetACME())
+}
+
 func TestGetEncryptedKey(t *testing.T) {
 	type ek struct {
 		a    *Authority

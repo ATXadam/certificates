@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/smallstep/linkedca"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/smallstep/certificates/acme"
+	"github.com/smallstep/certificates/api"
+	"github.com/smallstep/certificates/api/read"
 	"github.com/smallstep/certificates/api/render"
 	"github.com/smallstep/certificates/authority/admin"
 )
@@ -63,6 +67,22 @@ type ACMEAdminResponder interface {
 // acmeAdminResponder implements ACMEAdminResponder.
 type acmeAdminResponder struct{}
 
+func acmeProvisionerFromContext(ctx context.Context) (*linkedca.Provisioner, error) {
+	prov, ok := linkedca.ProvisionerFromContext(ctx)
+	if !ok {
+		return nil, admin.NewErrorISE("ACME provisioner is not in the request context")
+	}
+	return prov, nil
+}
+
+func acmeDatabaseFromContext(ctx context.Context) (acme.DB, error) {
+	db, ok := acme.DatabaseFromContext(ctx)
+	if !ok {
+		return nil, admin.NewErrorISE("ACME database is not in the request context")
+	}
+	return db, nil
+}
+
 // NewACMEAdminResponder returns a new ACMEAdminResponder
 func NewACMEAdminResponder() ACMEAdminResponder {
 	return &acmeAdminResponder{}
@@ -70,17 +90,93 @@ func NewACMEAdminResponder() ACMEAdminResponder {
 
 // GetExternalAccountKeys writes the response for the EAB keys GET endpoint
 func (h *acmeAdminResponder) GetExternalAccountKeys(w http.ResponseWriter, r *http.Request) {
-	render.Error(w, r, admin.NewError(admin.ErrorNotImplementedType, "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm"))
+	ctx := r.Context()
+	prov, err := acmeProvisionerFromContext(ctx)
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	db, err := acmeDatabaseFromContext(ctx)
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	if reference := chi.URLParam(r, "reference"); reference != "" {
+		key, err := db.GetExternalAccountKeyByReference(ctx, prov.GetId(), reference)
+		if err != nil {
+			render.Error(w, r, admin.WrapErrorISE(err, "error retrieving ACME EAB key"))
+			return
+		}
+		if key == nil {
+			render.Error(w, r, admin.NewError(admin.ErrorNotFoundType, "ACME EAB key does not exist"))
+			return
+		}
+		render.JSON(w, r, eakToLinked(key))
+		return
+	}
+	cursor, limit, err := api.ParseCursor(r)
+	if err != nil {
+		render.Error(w, r, admin.WrapError(admin.ErrorBadRequestType, err, "error parsing cursor and limit"))
+		return
+	}
+	keys, next, err := db.GetExternalAccountKeys(ctx, prov.GetId(), cursor, limit)
+	if err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error retrieving ACME EAB keys"))
+		return
+	}
+	response := &GetExternalAccountKeysResponse{NextCursor: next}
+	for _, key := range keys {
+		response.EAKs = append(response.EAKs, eakToLinked(key))
+	}
+	render.JSON(w, r, response)
 }
 
 // CreateExternalAccountKey writes the response for the EAB key POST endpoint
 func (h *acmeAdminResponder) CreateExternalAccountKey(w http.ResponseWriter, r *http.Request) {
-	render.Error(w, r, admin.NewError(admin.ErrorNotImplementedType, "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm"))
+	var req CreateExternalAccountKeyRequest
+	if err := read.JSON(r.Body, &req); err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		render.Error(w, r, admin.WrapError(admin.ErrorBadRequestType, err, "invalid ACME EAB key request"))
+		return
+	}
+	prov, err := acmeProvisionerFromContext(r.Context())
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	db, err := acmeDatabaseFromContext(r.Context())
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	key, err := db.CreateExternalAccountKey(r.Context(), prov.GetId(), req.Reference)
+	if err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error creating ACME EAB key"))
+		return
+	}
+	render.JSONStatus(w, r, eakToLinked(key), http.StatusCreated)
 }
 
 // DeleteExternalAccountKey writes the response for the EAB key DELETE endpoint
 func (h *acmeAdminResponder) DeleteExternalAccountKey(w http.ResponseWriter, r *http.Request) {
-	render.Error(w, r, admin.NewError(admin.ErrorNotImplementedType, "this functionality is currently only available in Certificate Manager: https://u.step.sm/cm"))
+	prov, err := acmeProvisionerFromContext(r.Context())
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	db, err := acmeDatabaseFromContext(r.Context())
+	if err != nil {
+		render.Error(w, r, err)
+		return
+	}
+	if err := db.DeleteExternalAccountKey(r.Context(), prov.GetId(), chi.URLParam(r, "id")); err != nil {
+		render.Error(w, r, admin.WrapErrorISE(err, "error deleting ACME EAB key"))
+		return
+	}
+	render.JSON(w, r, map[string]string{"status": "ok"})
 }
 
 func eakToLinked(k *acme.ExternalAccountKey) *linkedca.EABKey {

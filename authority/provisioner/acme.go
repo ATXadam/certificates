@@ -124,6 +124,65 @@ type ACME struct {
 	ctl                 *Controller
 }
 
+// TrustedACMEPolicyResolver is a runtime-only policy overlay for ACME orders.
+// It is separate from the persisted provisioner model so linkedca/admin
+// reloads cannot drop or change the broker policy.
+type TrustedACMEPolicyResolver interface {
+	EnabledForProvisioner(name string) bool
+}
+
+// TrustedACMEPolicyConfig enables trusted EAB-policy authorization for an
+// explicit set of ACME provisioner names.
+type TrustedACMEPolicyConfig struct {
+	Enabled      bool     `json:"enabled,omitempty"`
+	Provisioners []string `json:"provisioners,omitempty"`
+}
+
+// EnabledForProvisioner implements TrustedACMEPolicyResolver.
+func (c *TrustedACMEPolicyConfig) EnabledForProvisioner(name string) bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	for _, configured := range c.Provisioners {
+		if configured == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks static provisioners when available. Admin-managed
+// deployments may load provisioners later; the order path checks them again
+// and fails closed if RequireEAB is not enabled.
+func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool) error {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	if len(c.Provisioners) == 0 {
+		return errors.New("trusted_eab_policy.enabled requires at least one provisioner")
+	}
+	for _, name := range c.Provisioners {
+		if name == "" {
+			return errors.New("trusted_eab_policy provisioner name cannot be empty")
+		}
+		found := false
+		for _, p := range provisioners {
+			if p.GetName() != name {
+				continue
+			}
+			found = true
+			acme, ok := p.(*ACME)
+			if !ok || !acme.RequireEAB {
+				return errors.Errorf("trusted_eab_policy provisioner %q requires requireEAB=true", name)
+			}
+		}
+		if !found && !adminManaged {
+			return errors.Errorf("trusted_eab_policy provisioner %q was not found", name)
+		}
+	}
+	return nil
+}
+
 // GetID returns the provisioner unique identifier.
 func (p ACME) GetID() string {
 	if p.ID != "" {
@@ -178,7 +237,6 @@ func (p *ACME) Init(config Config) (err error) {
 	case p.Name == "":
 		return errors.New("provisioner name cannot be empty")
 	}
-
 	for _, c := range p.Challenges {
 		if err := c.Validate(); err != nil {
 			return err

@@ -900,6 +900,16 @@ func (a *Authority) GetConfig() *config.Config {
 	return a.config
 }
 
+// GetTrustedACMEPolicyResolver returns the runtime-only trusted EAB policy
+// overlay. It is sourced from authority configuration and is not part of the
+// persisted provisioner or linkedca model.
+func (a *Authority) GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver {
+	if a.config == nil || a.config.AuthorityConfig == nil {
+		return nil
+	}
+	return a.config.AuthorityConfig.TrustedEABPolicy
+}
+
 // GetBackdate returns the [time.Duration] representing the
 // amount of time that is to be subtracted from the current
 // time when issuing a new certificate.
