@@ -1,5 +1,6 @@
 package apiv1
 
+import "context"
 import (
 	"crypto"
 	"crypto/x509"
@@ -59,6 +60,21 @@ type CreateCertificateRequest struct {
 	RequestID      string
 	Provisioner    *ProvisionerInfo
 	IsCAServerCert bool
+}
+
+type orderIDContextKey struct{}
+
+// NewOrderIDContext associates a durable ACME order identity with a signing
+// request. External certificate authorities can use it to reconcile an
+// upstream order after a process restart.
+func NewOrderIDContext(ctx context.Context, orderID string) context.Context {
+	return context.WithValue(ctx, orderIDContextKey{}, orderID)
+}
+
+// OrderIDFromContext returns the durable ACME order identity, when present.
+func OrderIDFromContext(ctx context.Context) string {
+	orderID, _ := ctx.Value(orderIDContextKey{}).(string)
+	return orderID
 }
 
 // ProvisionerInfo contains information of the provisioner used to authorize a

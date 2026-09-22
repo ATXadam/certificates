@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallstep/certificates/acme/wire"
 	"github.com/smallstep/certificates/authority/provisioner"
+	"github.com/smallstep/certificates/cas/apiv1"
 	"github.com/smallstep/certificates/webhook"
 )
 
@@ -293,6 +294,7 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 
 	// Get authorizations from the ACME provisioner.
 	ctx = provisioner.NewContextWithMethod(ctx, provisioner.SignMethod)
+	ctx = apiv1.NewOrderIDContext(ctx, o.ID)
 	signOps, err := p.AuthorizeSign(ctx, "")
 	if err != nil {
 		return WrapErrorISE(err, "error retrieving authorization options from ACME provisioner")
