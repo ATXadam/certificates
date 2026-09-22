@@ -53,6 +53,7 @@ func (*fakeProvisioner) IsAttestationFormatEnabled(context.Context, provisioner.
 func (*fakeProvisioner) GetAttestationRoots() (*x509.CertPool, bool)   { return nil, false }
 func (*fakeProvisioner) AuthorizeRevoke(context.Context, string) error { return nil }
 func (*fakeProvisioner) GetID() string                                 { return "" }
+func (*fakeProvisioner) GetIDForToken() string                         { return "" }
 func (*fakeProvisioner) GetName() string                               { return "" }
 func (*fakeProvisioner) DefaultTLSCertDuration() time.Duration         { return 0 }
 func (*fakeProvisioner) GetOptions() *provisioner.Options              { return nil }
@@ -777,6 +778,7 @@ func TestHandler_NewAccount(t *testing.T) {
 			parsedJWS, err := jose.ParseJWS(raw)
 			assert.FatalError(t, err)
 			prov := newACMEProv(t)
+			prov.ID = uuid.NewString()
 			prov.RequireEAB = true
 			ctx := context.WithValue(context.Background(), payloadContextKey, &payloadInfo{value: payloadBytes})
 			ctx = context.WithValue(ctx, jwkContextKey, jwk)
@@ -791,7 +793,7 @@ func TestHandler_NewAccount(t *testing.T) {
 						return nil
 					},
 					MockGetExternalAccountKey: func(ctx context.Context, provisionerName, keyID string) (*acme.ExternalAccountKey, error) {
-						assert.Equals(t, provisionerName, prov.GetID())
+						assert.Equals(t, provisionerName, prov.GetIDForToken())
 						return &acme.ExternalAccountKey{
 							ID:            "eakID",
 							ProvisionerID: provID,
@@ -801,7 +803,7 @@ func TestHandler_NewAccount(t *testing.T) {
 						}, nil
 					},
 					MockUpdateExternalAccountKey: func(ctx context.Context, provisionerName string, eak *acme.ExternalAccountKey) error {
-						assert.Equals(t, provisionerName, prov.GetID())
+						assert.Equals(t, provisionerName, prov.GetIDForToken())
 						return nil
 					},
 				},

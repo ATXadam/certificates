@@ -113,6 +113,16 @@ type Authority struct {
 	meter Meter
 }
 
+// ACMEOrderFinalized forwards the post-commit notification to optional
+// certificate services that maintain order-recovery metadata.
+func (a *Authority) ACMEOrderFinalized(requestID string) error {
+	observer, ok := a.x509CAService.(casapi.ACMEOrderFinalizationObserver)
+	if !ok {
+		return nil
+	}
+	return observer.ACMEOrderFinalized(requestID)
+}
+
 // Info contains information about the authority.
 type Info struct {
 	StartTime          time.Time

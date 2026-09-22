@@ -643,6 +643,10 @@ func TestHandler_loadExternalAccountKey(t *testing.T) {
 		tc := prep(t)
 		t.Run(name, func(t *testing.T) {
 			ctx := acme.NewDatabaseContext(tc.ctx, tc.acmeDB)
+			ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
+				MgetID:         func() string { return "generated-id" },
+				MgetIDForToken: func() string { return "provID" },
+			})
 			req := httptest.NewRequest("GET", "/foo", http.NoBody)
 			req = req.WithContext(ctx)
 			w := httptest.NewRecorder()

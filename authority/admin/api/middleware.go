@@ -74,6 +74,9 @@ func loadProvisionerByName(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		if acmeProv, ok := p.(acme.Provisioner); ok {
+			ctx = acme.NewProvisionerContext(ctx, acmeProv)
+		}
 		ctx = linkedca.NewContextWithProvisioner(ctx, prov)
 		next(w, r.WithContext(ctx))
 	}
@@ -106,21 +109,22 @@ func checkAction(next http.HandlerFunc, supportedInStandalone bool) http.Handler
 func loadExternalAccountKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		prov := linkedca.MustProvisionerFromContext(ctx)
 		acmeDB := acme.MustDatabaseFromContext(ctx)
+		provisionerID, err := acmeProvisionerID(ctx)
+		if err != nil {
+			render.Error(w, r, admin.WrapErrorISE(err, "error resolving ACME protocol provisioner ID"))
+			return
+		}
 
 		reference := chi.URLParam(r, "reference")
 		keyID := chi.URLParam(r, "keyID")
 
-		var (
-			eak *acme.ExternalAccountKey
-			err error
-		)
+		var eak *acme.ExternalAccountKey
 
 		if keyID != "" {
-			eak, err = acmeDB.GetExternalAccountKey(ctx, prov.GetId(), keyID)
+			eak, err = acmeDB.GetExternalAccountKey(ctx, provisionerID, keyID)
 		} else {
-			eak, err = acmeDB.GetExternalAccountKeyByReference(ctx, prov.GetId(), reference)
+			eak, err = acmeDB.GetExternalAccountKeyByReference(ctx, provisionerID, reference)
 		}
 
 		if err != nil {

@@ -1069,6 +1069,23 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 	}
 }
 
+func TestDB_CreateExternalAccountKeyRoundTripPreservesHMAC(t *testing.T) {
+	db, err := nosql.New("badgerv2", t.TempDir())
+	assert.FatalError(t, err)
+	t.Cleanup(func() { assert.FatalError(t, db.Close()) })
+
+	store, err := New(db)
+	assert.FatalError(t, err)
+	created, err := store.CreateExternalAccountKey(context.Background(), "acme/acme", "round-trip")
+	assert.FatalError(t, err)
+	assert.Equals(t, 32, len(created.HmacKey))
+
+	loaded, err := store.GetExternalAccountKey(context.Background(), "acme/acme", created.ID)
+	assert.FatalError(t, err)
+	assert.Equals(t, len(created.HmacKey), len(loaded.HmacKey))
+	assert.Equals(t, created.HmacKey, loaded.HmacKey)
+}
+
 func TestDB_UpdateExternalAccountKey(t *testing.T) {
 	keyID := "keyID"
 	provID := "provID"

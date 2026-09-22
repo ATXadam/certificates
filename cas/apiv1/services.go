@@ -15,6 +15,13 @@ type CertificateAuthorityService interface {
 	RevokeCertificate(req *RevokeCertificateRequest) (*RevokeCertificateResponse, error)
 }
 
+// ACMEOrderFinalizationObserver is an optional hook invoked after the local
+// ACME order's terminal state has been persisted. External services can use it
+// to remove recovery metadata without creating a crash window before commit.
+type ACMEOrderFinalizationObserver interface {
+	ACMEOrderFinalized(requestID string) error
+}
+
 // CertificateAuthorityCRLGenerator is an optional interface implemented by CertificateAuthorityService
 // that has a method to create a CRL
 type CertificateAuthorityCRLGenerator interface {

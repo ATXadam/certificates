@@ -35,7 +35,11 @@ func (a *Account) GetLocation() string {
 
 // ToLog enables response logging.
 func (a *Account) ToLog() (interface{}, error) {
-	b, err := json.Marshal(a)
+	// The external account binding contains a signed JWS. It is required in the
+	// ACME response, but must not be copied into access logs.
+	logAccount := *a
+	logAccount.ExternalAccountBinding = nil
+	b, err := json.Marshal(&logAccount)
 	if err != nil {
 		return nil, WrapErrorISE(err, "error marshaling account for logging")
 	}

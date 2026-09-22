@@ -3,6 +3,7 @@ package acme
 import (
 	"crypto"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +98,20 @@ func TestAccount_IsValid(t *testing.T) {
 			assert.Equals(t, tc.acc.IsValid(), tc.exp)
 		})
 	}
+}
+
+func TestAccount_ToLogRedactsExternalAccountBinding(t *testing.T) {
+	const marker = "eab-sensitive-marker"
+	acc := &Account{
+		ID:                     "accountID",
+		Status:                 StatusValid,
+		ExternalAccountBinding: map[string]any{"signature": marker},
+	}
+
+	logged, err := acc.ToLog()
+	assert.FatalError(t, err)
+	assert.False(t, strings.Contains(logged.(string), marker))
+	assert.False(t, strings.Contains(logged.(string), "externalAccountBinding"))
 }
 
 func TestExternalAccountKey_BindTo(t *testing.T) {

@@ -305,6 +305,7 @@ func (a *Authority) signX509(ctx context.Context, csr *x509.CertificateRequest, 
 		Lifetime:    lifetime,
 		Backdate:    signOpts.Backdate,
 		Provisioner: pInfo,
+		RequestID:   casapi.OrderIDFromContext(ctx),
 	})
 	if err != nil {
 		return nil, prov, errs.Wrap(http.StatusInternalServerError, err, "authority.Sign; error creating certificate", opts...)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallstep/certificates/acme/wire"
 	"github.com/smallstep/certificates/authority/provisioner"
+	"github.com/smallstep/certificates/cas/apiv1"
 	"github.com/smallstep/certificates/webhook"
 )
 
@@ -61,6 +62,10 @@ type Order struct {
 	FinalizeURL       string       `json:"finalize"`
 	CertificateID     string       `json:"-"`
 	CertificateURL    string       `json:"certificate,omitempty"`
+	// CSR is retained while an order is processing so asynchronous finalization
+	// can be recovered after a server restart.
+	CSR     []byte `json:"-"`
+	Trusted bool   `json:"-"`
 }
 
 // ToLog enables response logging.
@@ -88,6 +93,8 @@ func (o *Order) UpdateStatus(ctx context.Context, db DB) error {
 		if now.After(o.ExpiresAt) {
 			o.Status = StatusInvalid
 			o.Error = NewError(ErrorMalformedType, "order has expired")
+			o.CSR = nil
+			o.Trusted = false
 			break
 		}
 		return nil
@@ -287,6 +294,7 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 
 	// Get authorizations from the ACME provisioner.
 	ctx = provisioner.NewContextWithMethod(ctx, provisioner.SignMethod)
+	ctx = apiv1.NewOrderIDContext(ctx, o.ID)
 	signOps, err := p.AuthorizeSign(ctx, "")
 	if err != nil {
 		return WrapErrorISE(err, "error retrieving authorization options from ACME provisioner")
@@ -341,6 +349,8 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 
 	o.CertificateID = cert.ID
 	o.Status = StatusValid
+	o.CSR = nil
+	o.Trusted = false
 
 	if err = db.UpdateOrder(ctx, o); err != nil {
 		return WrapErrorISE(err, "error updating order %s", o.ID)

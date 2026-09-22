@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -209,7 +210,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 
 	var eak *acme.ExternalAccountKey
 	if acmeProv.RequireEAB {
-		if eak, err = db.GetExternalAccountKeyByAccountID(ctx, prov.GetID(), acc.ID); err != nil {
+		if eak, err = db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), acc.ID); err != nil {
 			render.Error(w, r, acme.WrapErrorISE(err, "error retrieving external account binding key"))
 			return
 		}
@@ -253,11 +254,13 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
 			return
 		}
-		// evaluate the authority level policy
-		if err = ca.AreSANsAllowed(ctx, []string{identifier.Value}); err != nil {
-			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
-			return
-		}
+	}
+	// Evaluate the authority policy against the complete order. This preserves
+	// the authority-wide containment boundary for multi-SAN orders rather than
+	// treating each identifier as an independent request.
+	if err = ca.AreSANsAllowed(ctx, identifierValues(nor.Identifiers)); err != nil {
+		render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
+		return
 	}
 
 	now := clock.Now()
@@ -271,6 +274,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		AuthorizationIDs: make([]string, len(nor.Identifiers)),
 		NotBefore:        nor.NotBefore,
 		NotAfter:         nor.NotAfter,
+		Trusted:          trustedPolicy,
 	}
 
 	for i, identifier := range o.Identifiers {
@@ -320,6 +324,14 @@ func isIdentifierAllowed(acmePolicy policy.X509Policy, identifier acme.Identifie
 		return nil
 	}
 	return acmePolicy.AreSANsAllowed([]string{identifier.Value})
+}
+
+func identifierValues(identifiers []acme.Identifier) []string {
+	values := make([]string, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		values = append(values, identifier.Value)
+	}
+	return values
 }
 
 func newACMEPolicyEngine(eak *acme.ExternalAccountKey) (policy.X509Policy, error) {
@@ -462,6 +474,38 @@ func GetOrder(w http.ResponseWriter, r *http.Request) {
 			"provisioner '%s' does not own order '%s'", prov.GetID(), o.ID))
 		return
 	}
+	if o.Status == acme.StatusProcessing {
+		ca := mustAuthority(ctx)
+		if err := validateCurrentOrderPolicy(ctx, o, db, ca, prov); err != nil {
+			o.Status = acme.StatusInvalid
+			o.Error = acme.NewError(acme.ErrorUnauthorizedType, "current policy rejected processing order")
+			o.CSR = nil
+			o.Trusted = false
+			if updateErr := db.UpdateOrder(ctx, o); updateErr != nil {
+				render.Error(w, r, acme.WrapErrorISE(updateErr, "error updating policy-rejected order"))
+				return
+			}
+		} else if len(o.CSR) == 0 {
+			o.Status = acme.StatusInvalid
+			o.Error = acme.NewError(acme.ErrorServerInternalType, "processing order cannot be recovered: CSR is unavailable")
+			o.Trusted = false
+			if err := db.UpdateOrder(ctx, o); err != nil {
+				render.Error(w, r, acme.WrapErrorISE(err, "error updating unrecoverable order"))
+				return
+			}
+		} else if csr, parseErr := x509.ParseCertificateRequest(o.CSR); parseErr != nil {
+			o.Status = acme.StatusInvalid
+			o.Error = acme.NewError(acme.ErrorServerInternalType, "processing order cannot be recovered: invalid CSR")
+			o.CSR = nil
+			o.Trusted = false
+			if err := db.UpdateOrder(ctx, o); err != nil {
+				render.Error(w, r, acme.WrapErrorISE(err, "error updating unrecoverable order"))
+				return
+			}
+		} else {
+			startAsyncFinalization(ctx, db, o.ID, csr, ca, prov)
+		}
+	}
 	if err = o.UpdateStatus(ctx, db); err != nil {
 		render.Error(w, r, acme.WrapErrorISE(err, "error updating order status"))
 		return
@@ -532,10 +576,15 @@ func FinalizeOrder(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, r, acme.NewError(acme.ErrorOrderNotReadyType, "order %s is not ready", o.ID))
 		return
 	}
+	if err = validateCurrentOrderPolicy(ctx, o, db, ca, prov); err != nil {
+		render.Error(w, r, err)
+		return
+	}
 
 	// Immediately mark as processing and return — RFC 8555 §7.4 async finalization.
 	// This prevents ACME clients with short read timeouts (e.g. certbot's hardcoded
 	// 45s DEFAULT_NETWORK_TIMEOUT) from timing out while a slow external CA signs.
+	o.CSR = append([]byte(nil), fr.csr.Raw...)
 	o.Status = acme.StatusProcessing
 	if err = db.UpdateOrder(ctx, o); err != nil {
 		render.Error(w, r, acme.WrapErrorISE(err, "error setting order to processing"))
@@ -550,25 +599,125 @@ func FinalizeOrder(w http.ResponseWriter, r *http.Request) {
 	// We capture orderID and csr rather than the order pointer to avoid data races with
 	// the HTTP response still being flushed.
 	orderID, csr := o.ID, fr.csr
+	startAsyncFinalization(ctx, db, orderID, csr, ca, prov)
+}
+
+var asyncFinalizations sync.Map
+
+func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr *x509.CertificateRequest, ca acme.CertificateAuthority, prov acme.Provisioner) {
+	if !claimAsyncFinalization(orderID) {
+		return
+	}
 	go func() {
-		bgCtx := context.Background()
-		// Re-fetch from DB to get a clean copy, then reset to ready so
-		// Finalize()'s internal switch statement can proceed normally.
+		defer asyncFinalizations.Delete(orderID)
+		bgCtx := context.WithoutCancel(ctx)
 		bgOrder, err := db.GetOrder(bgCtx, orderID)
 		if err != nil {
 			slog.Error("async finalization: failed to re-fetch order", "order", orderID, "err", err)
 			return
 		}
 		bgOrder.Status = acme.StatusReady
+		if err := validateCurrentOrderPolicy(bgCtx, bgOrder, db, ca, prov); err != nil {
+			slog.Error("async finalization rejected by current policy", "order", orderID, "err", err)
+			bgOrder.Status = acme.StatusInvalid
+			bgOrder.Error = acme.NewError(acme.ErrorUnauthorizedType, "current policy rejected order")
+			bgOrder.CSR = nil
+			bgOrder.Trusted = false
+			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
+				slog.Error("async finalization: failed to persist policy failure", "order", orderID, "err", updateErr)
+			} else {
+				notifyOrderFinalized(ca, orderID)
+			}
+			return
+		}
 		if err := bgOrder.Finalize(bgCtx, db, csr, ca, prov); err != nil {
 			slog.Error("async finalization failed", "order", orderID, "err", err)
 			bgOrder.Status = acme.StatusInvalid
-			_ = db.UpdateOrder(bgCtx, bgOrder)
+			bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
+			bgOrder.CSR = nil
+			bgOrder.Trusted = false
+			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
+				slog.Error("async finalization: failed to persist failure", "order", orderID, "err", updateErr)
+			} else {
+				notifyOrderFinalized(ca, orderID)
+			}
 			return
 		}
-		// On success, Finalize() sets StatusValid and calls db.UpdateOrder internally.
+		notifyOrderFinalized(ca, orderID)
 		slog.Info("async finalization succeeded", "order", orderID)
 	}()
+}
+
+func claimAsyncFinalization(orderID string) bool {
+	_, loaded := asyncFinalizations.LoadOrStore(orderID, struct{}{})
+	return !loaded
+}
+
+type acmeOrderFinalizationObserver interface {
+	ACMEOrderFinalized(requestID string) error
+}
+
+// notifyOrderFinalized runs only after the order's terminal state has been
+// durably written. Failure to remove recovery metadata is safe: stale entries
+// are preferable to losing a mapping before the local commit.
+func notifyOrderFinalized(ca acme.CertificateAuthority, requestID string) {
+	observer, ok := ca.(acmeOrderFinalizationObserver)
+	if !ok {
+		return
+	}
+	if err := observer.ACMEOrderFinalized(requestID); err != nil {
+		slog.Error("async finalization: failed to clean recovery metadata", "order", requestID, "err", err)
+	}
+}
+
+func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, ca acme.CertificateAuthority, prov acme.Provisioner) error {
+	if err := ca.AreSANsAllowed(ctx, identifierValues(o.Identifiers)); err != nil {
+		return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current authority policy rejected order")
+	}
+	for _, identifier := range o.Identifiers {
+		if err := prov.AuthorizeOrderIdentifier(ctx, provisioner.ACMEIdentifier{Type: provisioner.ACMEIdentifierType(identifier.Type), Value: identifier.Value}); err != nil {
+			return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current provisioner policy rejected order")
+		}
+	}
+
+	if !o.Trusted {
+		return nil
+	}
+
+	acmeProv, err := acmeProvisionerFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	resolverCA, ok := ca.(interface {
+		GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver
+	})
+	if !ok || resolverCA.GetTrustedACMEPolicyResolver() == nil || !resolverCA.GetTrustedACMEPolicyResolver().EnabledForProvisioner(acmeProv.GetName()) {
+		return acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization is no longer enabled")
+	}
+	eak, err := db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), o.AccountID)
+	if err != nil {
+		return acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable")
+	}
+	if !hasNonEmptyACMEPolicy(eak) {
+		return acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty")
+	}
+	for _, identifier := range o.Identifiers {
+		if identifier.Type != acme.DNS {
+			return acme.NewError(acme.ErrorRejectedIdentifierType, "trusted authorization does not support identifier type %s", identifier.Type)
+		}
+		if err := isIdentifierAllowedMust(eak, identifier); err != nil {
+			return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order")
+		}
+	}
+	return nil
+}
+
+func isIdentifierAllowedMust(eak *acme.ExternalAccountKey, identifier acme.Identifier) error {
+	engine, err := newACMEPolicyEngine(eak)
+	if err != nil {
+		return err
+	}
+	return isIdentifierAllowed(engine, identifier)
 }
 
 // challengeTypes determines the types of challenges that should be used

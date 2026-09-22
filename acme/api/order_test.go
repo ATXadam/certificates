@@ -30,6 +30,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestClaimAsyncFinalizationSuppressesDuplicateWorkerInProcess(t *testing.T) {
+	orderID := "duplicate-worker-test"
+	asyncFinalizations.Delete(orderID)
+	t.Cleanup(func() { asyncFinalizations.Delete(orderID) })
+	if !claimAsyncFinalization(orderID) {
+		t.Fatal("first worker claim was rejected")
+	}
+	if claimAsyncFinalization(orderID) {
+		t.Fatal("second in-process worker claim was accepted")
+	}
+}
+
+type orderFinalizationObserverTestCA struct {
+	acme.CertificateAuthority
+	requestID string
+}
+
+func (ca *orderFinalizationObserverTestCA) ACMEOrderFinalized(requestID string) error {
+	ca.requestID = requestID
+	return nil
+}
+
+func TestNotifyOrderFinalizedInvokesOptionalObserver(t *testing.T) {
+	ca := &orderFinalizationObserverTestCA{}
+	notifyOrderFinalized(ca, "committed-order")
+	if ca.requestID != "committed-order" {
+		t.Fatalf("observer request ID = %q", ca.requestID)
+	}
+}
+
 func TestNewOrderRequest_Validate(t *testing.T) {
 	type test struct {
 		nor      *NewOrderRequest

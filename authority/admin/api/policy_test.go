@@ -1984,6 +1984,10 @@ func TestPolicyAdminResponder_GetACMEAccountPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := admin.NewContext(tc.ctx, tc.adminDB)
 			ctx = acme.NewDatabaseContext(ctx, tc.acmeDB)
+			ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
+				MgetID:         func() string { return "generated-id" },
+				MgetIDForToken: func() string { return "provID" },
+			})
 			par := NewPolicyAdminResponder()
 
 			req := httptest.NewRequest("GET", "/foo", http.NoBody)
@@ -2202,6 +2206,10 @@ func TestPolicyAdminResponder_CreateACMEAccountPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := admin.NewContext(tc.ctx, tc.adminDB)
 			ctx = acme.NewDatabaseContext(ctx, tc.acmeDB)
+			ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
+				MgetID:         func() string { return "generated-id" },
+				MgetIDForToken: func() string { return "provID" },
+			})
 			par := NewPolicyAdminResponder()
 
 			req := httptest.NewRequest("POST", "/foo", io.NopCloser(bytes.NewBuffer(tc.body)))
@@ -2439,6 +2447,10 @@ func TestPolicyAdminResponder_UpdateACMEAccountPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := admin.NewContext(tc.ctx, tc.adminDB)
 			ctx = acme.NewDatabaseContext(ctx, tc.acmeDB)
+			ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
+				MgetID:         func() string { return "generated-id" },
+				MgetIDForToken: func() string { return "provID" },
+			})
 			par := NewPolicyAdminResponder()
 
 			req := httptest.NewRequest("POST", "/foo", io.NopCloser(bytes.NewBuffer(tc.body)))
@@ -2598,6 +2610,10 @@ func TestPolicyAdminResponder_DeleteACMEAccountPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := admin.NewContext(tc.ctx, tc.adminDB)
 			ctx = acme.NewDatabaseContext(ctx, tc.acmeDB)
+			ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{
+				MgetID:         func() string { return "generated-id" },
+				MgetIDForToken: func() string { return "provID" },
+			})
 			par := NewPolicyAdminResponder()
 
 			req := httptest.NewRequest("POST", "/foo", io.NopCloser(bytes.NewBuffer(tc.body)))
