@@ -2571,8 +2571,8 @@ func TestHandler_FinalizeOrder(t *testing.T) {
 			}
 		},
 		// Tests that an expired ready order fails at UpdateStatus, which tries to
-	// write StatusInvalid to the DB and gets an error back.
-	"fail/update-status-error": func(t *testing.T) test {
+		// write StatusInvalid to the DB and gets an error back.
+		"fail/update-status-error": func(t *testing.T) test {
 			acc := &acme.Account{ID: "accountID"}
 			ctx := acme.NewProvisionerContext(context.Background(), prov)
 			ctx = context.WithValue(ctx, accContextKey, acc)
