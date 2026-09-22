@@ -352,7 +352,6 @@ func (par *policyAdminResponder) CreateACMEAccountPolicy(w http.ResponseWriter, 
 		return
 	}
 
-	prov := linkedca.MustProvisionerFromContext(ctx)
 	eak := linkedca.MustExternalAccountKeyFromContext(ctx)
 	eakPolicy := eak.GetPolicy()
 	if eakPolicy != nil {
@@ -378,7 +377,7 @@ func (par *policyAdminResponder) CreateACMEAccountPolicy(w http.ResponseWriter, 
 
 	acmeEAK := linkedEAKToCertificates(eak)
 	acmeDB := acme.MustDatabaseFromContext(ctx)
-	if err := acmeDB.UpdateExternalAccountKey(ctx, prov.GetId(), acmeEAK); err != nil {
+	if err := acmeDB.UpdateExternalAccountKey(ctx, acmeProvisionerID(ctx), acmeEAK); err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error creating ACME EAK policy"))
 		return
 	}
@@ -393,7 +392,6 @@ func (par *policyAdminResponder) UpdateACMEAccountPolicy(w http.ResponseWriter, 
 		return
 	}
 
-	prov := linkedca.MustProvisionerFromContext(ctx)
 	eak := linkedca.MustExternalAccountKeyFromContext(ctx)
 	eakPolicy := eak.GetPolicy()
 	if eakPolicy == nil {
@@ -417,7 +415,7 @@ func (par *policyAdminResponder) UpdateACMEAccountPolicy(w http.ResponseWriter, 
 	eak.Policy = newPolicy
 	acmeEAK := linkedEAKToCertificates(eak)
 	acmeDB := acme.MustDatabaseFromContext(ctx)
-	if err := acmeDB.UpdateExternalAccountKey(ctx, prov.GetId(), acmeEAK); err != nil {
+	if err := acmeDB.UpdateExternalAccountKey(ctx, acmeProvisionerID(ctx), acmeEAK); err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error updating ACME EAK policy"))
 		return
 	}
@@ -432,7 +430,6 @@ func (par *policyAdminResponder) DeleteACMEAccountPolicy(w http.ResponseWriter, 
 		return
 	}
 
-	prov := linkedca.MustProvisionerFromContext(ctx)
 	eak := linkedca.MustExternalAccountKeyFromContext(ctx)
 	eakPolicy := eak.GetPolicy()
 	if eakPolicy == nil {
@@ -445,7 +442,7 @@ func (par *policyAdminResponder) DeleteACMEAccountPolicy(w http.ResponseWriter, 
 
 	acmeEAK := linkedEAKToCertificates(eak)
 	acmeDB := acme.MustDatabaseFromContext(ctx)
-	if err := acmeDB.UpdateExternalAccountKey(ctx, prov.GetId(), acmeEAK); err != nil {
+	if err := acmeDB.UpdateExternalAccountKey(ctx, acmeProvisionerID(ctx), acmeEAK); err != nil {
 		render.Error(w, r, admin.WrapErrorISE(err, "error deleting ACME EAK policy"))
 		return
 	}
