@@ -61,6 +61,10 @@ type Order struct {
 	FinalizeURL       string       `json:"finalize"`
 	CertificateID     string       `json:"-"`
 	CertificateURL    string       `json:"certificate,omitempty"`
+	// CSR is retained while an order is processing so asynchronous finalization
+	// can be recovered after a server restart.
+	CSR     []byte `json:"-"`
+	Trusted bool   `json:"-"`
 }
 
 // ToLog enables response logging.

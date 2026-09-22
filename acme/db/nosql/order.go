@@ -26,6 +26,8 @@ type dbOrder struct {
 	CreatedAt        time.Time         `json:"createdAt"`
 	ExpiresAt        time.Time         `json:"expiresAt,omitempty"`
 	CertificateID    string            `json:"certificate,omitempty"`
+	CSR              []byte            `json:"csr,omitempty"`
+	Trusted          bool              `json:"trusted,omitempty"`
 	Error            *acme.Error       `json:"error,omitempty"`
 }
 
@@ -68,6 +70,8 @@ func (db *DB) GetOrder(ctx context.Context, id string) (*acme.Order, error) {
 		NotAfter:         dbo.NotAfter,
 		AuthorizationIDs: dbo.AuthorizationIDs,
 		Error:            dbo.Error,
+		CSR:              append([]byte(nil), dbo.CSR...),
+		Trusted:          dbo.Trusted,
 	}
 
 	return o, nil
@@ -93,6 +97,8 @@ func (db *DB) CreateOrder(ctx context.Context, o *acme.Order) error {
 		NotBefore:        o.NotBefore,
 		NotAfter:         o.NotAfter,
 		AuthorizationIDs: o.AuthorizationIDs,
+		CSR:              append([]byte(nil), o.CSR...),
+		Trusted:          o.Trusted,
 	}
 	if err := db.save(ctx, o.ID, dbo, nil, "order", orderTable); err != nil {
 		return err
@@ -117,6 +123,8 @@ func (db *DB) UpdateOrder(ctx context.Context, o *acme.Order) error {
 	nu.Status = o.Status
 	nu.Error = o.Error
 	nu.CertificateID = o.CertificateID
+	nu.CSR = append([]byte(nil), o.CSR...)
+	nu.Trusted = o.Trusted
 
 	return db.save(ctx, old.ID, nu, old, "order", orderTable)
 }

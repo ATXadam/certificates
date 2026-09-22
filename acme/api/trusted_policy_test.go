@@ -81,6 +81,90 @@ func TestTrustedPolicyWildcardSemantics(t *testing.T) {
 	}
 }
 
+func TestTrustedPolicySANRegressionMatrix(t *testing.T) {
+	tests := []struct {
+		name         string
+		policy       *acme.Policy
+		identifiers  []acme.Identifier
+		wantAllAllow bool
+	}{
+		{
+			name: "explicit DNS plus wildcard disabled rejects wildcard",
+			policy: &acme.Policy{X509: acme.X509Policy{
+				Allowed: acme.PolicyNames{DNSNames: []string{"revsolns.net"}},
+			}},
+			identifiers:  []acme.Identifier{{Type: acme.DNS, Value: "*.revsolns.net"}},
+			wantAllAllow: false,
+		},
+		{
+			name: "explicit DNS plus wildcard enabled allows wildcard",
+			policy: &acme.Policy{X509: acme.X509Policy{
+				Allowed: acme.PolicyNames{DNSNames: []string{"*.revsolns.net"}}, AllowWildcardNames: true,
+			}},
+			identifiers:  []acme.Identifier{{Type: acme.DNS, Value: "*.revsolns.net"}},
+			wantAllAllow: true,
+		},
+		{
+			name: "two explicitly allowed wildcard SANs",
+			policy: &acme.Policy{X509: acme.X509Policy{
+				Allowed: acme.PolicyNames{DNSNames: []string{"*.revsolns.net", "*.incus.revsolns.net"}}, AllowWildcardNames: true,
+			}},
+			identifiers: []acme.Identifier{
+				{Type: acme.DNS, Value: "*.revsolns.net"},
+				{Type: acme.DNS, Value: "*.incus.revsolns.net"},
+			},
+			wantAllAllow: true,
+		},
+		{
+			name: "mixed authorized and unauthorized SANs rejects order",
+			policy: &acme.Policy{X509: acme.X509Policy{
+				Allowed: acme.PolicyNames{DNSNames: []string{"*.revsolns.net"}}, AllowWildcardNames: true,
+			}},
+			identifiers: []acme.Identifier{
+				{Type: acme.DNS, Value: "*.revsolns.net"},
+				{Type: acme.DNS, Value: "*.unauthorized.revsolns.net"},
+			},
+			wantAllAllow: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := newACMEPolicyEngine(&acme.ExternalAccountKey{Policy: tt.policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			allAllowed := true
+			for _, identifier := range tt.identifiers {
+				if err := isIdentifierAllowed(engine, identifier); err != nil {
+					allAllowed = false
+				}
+			}
+			if allAllowed != tt.wantAllAllow {
+				t.Fatalf("all identifiers allowed = %v, want %v", allAllowed, tt.wantAllAllow)
+			}
+		})
+	}
+}
+
+func TestValidateCurrentOrderPolicyUsesWholeOrder(t *testing.T) {
+	var got []string
+	ca := &mockCA{MockAreSANsallowed: func(_ context.Context, sans []string) error {
+		got = append([]string(nil), sans...)
+		return nil
+	}}
+	o := &acme.Order{Identifiers: []acme.Identifier{
+		{Type: acme.DNS, Value: "*.revsolns.net"},
+		{Type: acme.DNS, Value: "*.incus.revsolns.net"},
+	}}
+	if err := validateCurrentOrderPolicy(context.Background(), o, &acme.MockDB{}, ca, &fakeProvisioner{}); err != nil {
+		t.Fatalf("validateCurrentOrderPolicy() error = %v", err)
+	}
+	if len(got) != 2 || got[0] != "*.revsolns.net" || got[1] != "*.incus.revsolns.net" {
+		t.Fatalf("authority policy saw %v, want the complete order SAN set", got)
+	}
+}
+
 func TestTrustedPolicyRejectsMixedOrder(t *testing.T) {
 	engine, err := newACMEPolicyEngine(&acme.ExternalAccountKey{Policy: &acme.Policy{X509: acme.X509Policy{
 		Allowed: acme.PolicyNames{DNSNames: []string{"*.revsolns.net", "*.incus.revsolns.net"}}, AllowWildcardNames: true,
