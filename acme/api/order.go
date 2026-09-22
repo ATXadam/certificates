@@ -215,26 +215,13 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	trustedPolicy := false
-	resolverPresent := false
 	if resolverCA, ok := ca.(interface {
 		GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver
 	}); ok {
-		resolverPresent = true
 		if resolver := resolverCA.GetTrustedACMEPolicyResolver(); resolver != nil {
 			trustedPolicy = resolver.EnabledForProvisioner(acmeProv.GetName())
 		}
 	}
-	slog.Info("acme trusted policy decision",
-		"provisioner_name", acmeProv.GetName(),
-		"provisioner_id", acmeProv.GetID(),
-		"require_eab", acmeProv.RequireEAB,
-		"resolver_present", resolverPresent,
-		"trusted_enabled", trustedPolicy,
-		"eab_found", eak != nil,
-		"eab_bound", eak != nil && eak.AlreadyBound(),
-		"eab_policy_present", eak != nil && eak.Policy != nil,
-		"identifier_count", len(nor.Identifiers),
-	)
 	if trustedPolicy && !acmeProv.RequireEAB {
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires requireEAB=true on the provisioner"))
 		return
