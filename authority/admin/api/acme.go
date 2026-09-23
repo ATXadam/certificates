@@ -165,6 +165,9 @@ func (h *acmeAdminResponder) CreateExternalAccountKey(w http.ResponseWriter, r *
 		render.Error(w, r, admin.WrapErrorISE(err, "error creating ACME EAB key"))
 		return
 	}
+	logAdminSecurityEvent(r.Context(), "admin_eab_created",
+		"provisioner_id", provisionerID, "eab_key_id", key.ID, "result", "success",
+	)
 	render.JSONStatus(w, r, eakToLinked(key), http.StatusCreated)
 }
 
@@ -188,6 +191,9 @@ func (h *acmeAdminResponder) DeleteExternalAccountKey(w http.ResponseWriter, r *
 		render.Error(w, r, admin.WrapErrorISE(err, "error deleting ACME EAB key"))
 		return
 	}
+	logAdminSecurityEvent(r.Context(), "admin_eab_deleted",
+		"provisioner_id", provisionerID, "eab_key_id", chi.URLParam(r, "id"), "result", "success",
+	)
 	render.JSON(w, r, map[string]string{"status": "ok"})
 }
 

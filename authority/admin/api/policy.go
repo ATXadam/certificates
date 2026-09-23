@@ -386,6 +386,9 @@ func (par *policyAdminResponder) CreateACMEAccountPolicy(w http.ResponseWriter, 
 		render.Error(w, r, admin.WrapErrorISE(err, "error creating ACME EAK policy"))
 		return
 	}
+	logAdminSecurityEvent(ctx, "admin_acme_account_policy_created",
+		"provisioner_id", provisionerID, "eab_key_id", eak.Id, "result", "success",
+	)
 
 	render.ProtoJSONStatus(w, newPolicy, http.StatusCreated)
 }
@@ -429,6 +432,9 @@ func (par *policyAdminResponder) UpdateACMEAccountPolicy(w http.ResponseWriter, 
 		render.Error(w, r, admin.WrapErrorISE(err, "error updating ACME EAK policy"))
 		return
 	}
+	logAdminSecurityEvent(ctx, "admin_acme_account_policy_updated",
+		"provisioner_id", provisionerID, "eab_key_id", eak.Id, "result", "success",
+	)
 
 	render.ProtoJSONStatus(w, newPolicy, http.StatusOK)
 }
@@ -461,6 +467,9 @@ func (par *policyAdminResponder) DeleteACMEAccountPolicy(w http.ResponseWriter, 
 		render.Error(w, r, admin.WrapErrorISE(err, "error deleting ACME EAK policy"))
 		return
 	}
+	logAdminSecurityEvent(ctx, "admin_acme_account_policy_deleted",
+		"provisioner_id", provisionerID, "eab_key_id", eak.Id, "result", "success",
+	)
 
 	render.JSONStatus(w, r, DeleteResponse{Status: "ok"}, http.StatusOK)
 }

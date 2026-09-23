@@ -224,10 +224,18 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if trustedPolicy && !acmeProv.RequireEAB {
+		logSecurityEvent(ctx, "trusted_authorization_decision",
+			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"identifiers", nor.Identifiers, "result", "denied", "reason", "require_eab_disabled",
+		)
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires requireEAB=true on the provisioner"))
 		return
 	}
 	if trustedPolicy && !hasNonEmptyACMEPolicy(eak) {
+		logSecurityEvent(ctx, "trusted_authorization_decision",
+			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"identifiers", nor.Identifiers, "result", "denied", "reason", "missing_positive_account_policy",
+		)
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires a bound EAB with a non-empty policy"))
 		return
 	}
@@ -240,17 +248,41 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 
 	for _, identifier := range nor.Identifiers {
 		if trustedPolicy && identifier.Type != acme.DNS {
+			logSecurityEvent(ctx, "trusted_authorization_decision",
+				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"identifiers", nor.Identifiers, "result", "denied", "reason", "unsupported_identifier_type",
+			)
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
 			return
 		}
 		// evaluate the ACME account level policy
 		if err = isIdentifierAllowed(acmePolicy, identifier); err != nil {
+			logSecurityEvent(ctx, "acme_policy_rejection",
+				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
+			)
+			if trustedPolicy {
+				logSecurityEvent(ctx, "trusted_authorization_decision",
+					"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+					"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
+				)
+			}
 			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
 			return
 		}
 		// evaluate the provisioner level policy
 		orderIdentifier := provisioner.ACMEIdentifier{Type: provisioner.ACMEIdentifierType(identifier.Type), Value: identifier.Value}
 		if err = prov.AuthorizeOrderIdentifier(ctx, orderIdentifier); err != nil {
+			logSecurityEvent(ctx, "acme_policy_rejection",
+				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"identifiers", nor.Identifiers, "result", "denied", "reason", "provisioner_policy",
+			)
+			if trustedPolicy {
+				logSecurityEvent(ctx, "trusted_authorization_decision",
+					"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+					"identifiers", nor.Identifiers, "result", "denied", "reason", "provisioner_policy",
+				)
+			}
 			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
 			return
 		}
@@ -259,9 +291,27 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	// the authority-wide containment boundary for multi-SAN orders rather than
 	// treating each identifier as an independent request.
 	if err = ca.AreSANsAllowed(ctx, identifierValues(nor.Identifiers)); err != nil {
+		logSecurityEvent(ctx, "acme_policy_rejection",
+			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"identifiers", nor.Identifiers, "result", "denied", "reason", "authority_policy",
+		)
+		if trustedPolicy {
+			logSecurityEvent(ctx, "trusted_authorization_decision",
+				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"identifiers", nor.Identifiers, "result", "denied", "reason", "authority_policy",
+			)
+		}
 		render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
 		return
 	}
+	trustedResult, trustedReason := "disabled", "runtime_overlay_disabled"
+	if trustedPolicy {
+		trustedResult, trustedReason = "allowed", "all_account_provisioner_authority_policies_passed"
+	}
+	logSecurityEvent(ctx, "trusted_authorization_decision",
+		"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+		"identifiers", nor.Identifiers, "result", trustedResult, "reason", trustedReason,
+	)
 
 	now := clock.Now()
 	// New order.
@@ -312,6 +362,13 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, r, acme.WrapErrorISE(err, "error creating order"))
 		return
 	}
+	logSecurityEvent(ctx, "downstream_order_created",
+		"local_order_id", o.ID,
+		"account_id", acc.ID,
+		"provisioner_id", acmeProv.GetIDForToken(),
+		"identifiers", o.Identifiers,
+		"result", "success",
+	)
 
 	linker.LinkOrder(ctx, o)
 
@@ -619,6 +676,11 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 		bgOrder.Status = acme.StatusReady
 		if err := validateCurrentOrderPolicy(bgCtx, bgOrder, db, ca, prov); err != nil {
 			slog.Error("async finalization rejected by current policy", "order", orderID, "err", err)
+			logSecurityEvent(bgCtx, "finalization_failed",
+				"local_order_id", orderID, "account_id", bgOrder.AccountID,
+				"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
+				"identifiers", bgOrder.Identifiers, "result", "failure", "reason", "current_policy_rejected",
+			)
 			bgOrder.Status = acme.StatusInvalid
 			bgOrder.Error = acme.NewError(acme.ErrorUnauthorizedType, "current policy rejected order")
 			bgOrder.CSR = nil
@@ -632,6 +694,11 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 		}
 		if err := bgOrder.Finalize(bgCtx, db, csr, ca, prov); err != nil {
 			slog.Error("async finalization failed", "order", orderID, "err", err)
+			logSecurityEvent(bgCtx, "finalization_failed",
+				"local_order_id", orderID, "account_id", bgOrder.AccountID,
+				"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
+				"identifiers", bgOrder.Identifiers, "result", "failure", "reason", "issuer_finalization_failed",
+			)
 			bgOrder.Status = acme.StatusInvalid
 			bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
 			bgOrder.CSR = nil
@@ -643,6 +710,11 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			}
 			return
 		}
+		logSecurityEvent(bgCtx, "finalization_succeeded",
+			"local_order_id", orderID, "account_id", bgOrder.AccountID,
+			"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
+			"identifiers", bgOrder.Identifiers, "result", "success",
+		)
 		notifyOrderFinalized(ca, orderID)
 		slog.Info("async finalization succeeded", "order", orderID)
 	}()
@@ -671,12 +743,27 @@ func notifyOrderFinalized(ca acme.CertificateAuthority, requestID string) {
 }
 
 func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, ca acme.CertificateAuthority, prov acme.Provisioner) error {
+	reject := func(reason string, err error) error {
+		fields := []any{
+			"local_order_id", o.ID, "account_id", o.AccountID,
+			"provisioner_id", prov.GetIDForToken(), "identifiers", o.Identifiers,
+			"result", "denied", "reason", reason,
+		}
+		if len(o.CSR) > 0 {
+			fields = append(fields, "csr_sha256", csrSHA256(o.CSR))
+		}
+		logSecurityEvent(ctx, "acme_policy_rejection", fields...)
+		if o.Trusted {
+			logSecurityEvent(ctx, "trusted_authorization_decision", fields...)
+		}
+		return err
+	}
 	if err := ca.AreSANsAllowed(ctx, identifierValues(o.Identifiers)); err != nil {
-		return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current authority policy rejected order")
+		return reject("authority_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current authority policy rejected order"))
 	}
 	for _, identifier := range o.Identifiers {
 		if err := prov.AuthorizeOrderIdentifier(ctx, provisioner.ACMEIdentifier{Type: provisioner.ACMEIdentifierType(identifier.Type), Value: identifier.Value}); err != nil {
-			return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current provisioner policy rejected order")
+			return reject("provisioner_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current provisioner policy rejected order"))
 		}
 	}
 
@@ -686,29 +773,38 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 
 	acmeProv, err := acmeProvisionerFromContext(ctx)
 	if err != nil {
-		return err
+		return reject("acme_provisioner_missing", err)
 	}
 	resolverCA, ok := ca.(interface {
 		GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver
 	})
 	if !ok || resolverCA.GetTrustedACMEPolicyResolver() == nil || !resolverCA.GetTrustedACMEPolicyResolver().EnabledForProvisioner(acmeProv.GetName()) {
-		return acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization is no longer enabled")
+		return reject("trusted_overlay_disabled", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization is no longer enabled"))
 	}
 	eak, err := db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), o.AccountID)
 	if err != nil {
-		return acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable")
+		return reject("eab_binding_unavailable", acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable"))
 	}
 	if !hasNonEmptyACMEPolicy(eak) {
-		return acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty")
+		return reject("account_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty"))
 	}
 	for _, identifier := range o.Identifiers {
 		if identifier.Type != acme.DNS {
-			return acme.NewError(acme.ErrorRejectedIdentifierType, "trusted authorization does not support identifier type %s", identifier.Type)
+			return reject("unsupported_identifier_type", acme.NewError(acme.ErrorRejectedIdentifierType, "trusted authorization does not support identifier type %s", identifier.Type))
 		}
 		if err := isIdentifierAllowedMust(eak, identifier); err != nil {
-			return acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order")
+			return reject("account_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order"))
 		}
 	}
+	fields := []any{
+		"local_order_id", o.ID, "account_id", o.AccountID,
+		"provisioner_id", prov.GetIDForToken(), "identifiers", o.Identifiers,
+		"result", "allowed", "reason", "current_policy_recheck_passed",
+	}
+	if len(o.CSR) > 0 {
+		fields = append(fields, "csr_sha256", csrSHA256(o.CSR))
+	}
+	logSecurityEvent(ctx, "trusted_authorization_decision", fields...)
 	return nil
 }
 
