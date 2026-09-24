@@ -441,10 +441,18 @@ func newAuthorizationWithTrust(ctx context.Context, az *acme.Authorization, trus
 		}
 
 		var trustedType acme.ChallengeType
-		for _, typ := range chTypes {
-			if prov.IsChallengeEnabled(ctx, provisioner.ACMEChallenge(typ)) {
-				trustedType = typ
-				break
+		// Preserve client compatibility without performing downstream DCV.
+		// RouterOS expects http-01 for ordinary DNS names, while wildcard DNS
+		// identifiers can only use dns-01. Prefer that shape for trusted authz.
+		if az.Identifier.Type == acme.DNS && !az.Wildcard &&
+			prov.IsChallengeEnabled(ctx, provisioner.ACMEChallenge(acme.HTTP01)) {
+			trustedType = acme.HTTP01
+		} else {
+			for _, typ := range chTypes {
+				if prov.IsChallengeEnabled(ctx, provisioner.ACMEChallenge(typ)) {
+					trustedType = typ
+					break
+				}
 			}
 		}
 		if trustedType == "" {

@@ -64,8 +64,34 @@ func TestNewAuthorizationWithTrust(t *testing.T) {
 		t.Fatalf("trusted authorization has %d challenges, want one valid challenge", len(az.Challenges))
 	}
 	ch := az.Challenges[0]
-	if ch.Status != acme.StatusValid || ch.ID != "challenge-id" || ch.Token == "" || ch.ValidatedAt == "" {
-		t.Fatalf("trusted challenge = %#v, want persisted valid challenge with token and validated timestamp", ch)
+	if ch.Status != acme.StatusValid || ch.ID != "challenge-id" || ch.Type != acme.DNS01 || ch.Token == "" || ch.ValidatedAt == "" {
+		t.Fatalf("trusted challenge = %#v, want persisted valid dns-01 challenge with token and validated timestamp", ch)
+	}
+}
+
+func TestNewAuthorizationWithTrustPrefersHTTP01ForNonWildcardDNS(t *testing.T) {
+	db := &acme.MockDB{
+		MockCreateChallenge: func(_ context.Context, ch *acme.Challenge) error {
+			ch.ID = "challenge-id"
+			return nil
+		},
+		MockUpdateChallenge: func(_ context.Context, ch *acme.Challenge) error { return nil },
+		MockCreateAuthorization: func(_ context.Context, az *acme.Authorization) error {
+			az.ID = "authz-id"
+			return nil
+		},
+	}
+	ctx := acme.NewDatabaseContext(context.Background(), db)
+	ctx = acme.NewProvisionerContext(ctx, &acme.MockProvisioner{})
+	az := &acme.Authorization{
+		AccountID:  "account-id",
+		Identifier: acme.Identifier{Type: acme.DNS, Value: "rb4011.revsolns.net"},
+	}
+	if err := newAuthorizationWithTrust(ctx, az, true); err != nil {
+		t.Fatalf("newAuthorizationWithTrust() error = %v", err)
+	}
+	if len(az.Challenges) != 1 || az.Challenges[0].Type != acme.HTTP01 || az.Challenges[0].Status != acme.StatusValid {
+		t.Fatalf("trusted challenge = %#v, want one already-valid http-01 challenge", az.Challenges)
 	}
 }
 
