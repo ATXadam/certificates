@@ -24,14 +24,14 @@ func TestTrustedEABPolicyValidation(t *testing.T) {
 	acme.RequireEAB = false
 	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "requires requireEAB=true")
 
-	configured.TrustedEABPolicy.AllowWithoutEAB = []string{"acme"}
+	configured.TrustedEABPolicy.AllowWithoutEAB = map[string][]string{"acme": {"incus.revsolns.net"}}
 	require.NoError(t, configured.Validate(provisioner.Audiences{}))
 
 	acme.RequireEAB = true
 	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "requires requireEAB=false")
 	acme.RequireEAB = false
 
-	configured.TrustedEABPolicy.AllowWithoutEAB = []string{"missing"}
+	configured.TrustedEABPolicy.AllowWithoutEAB = map[string][]string{"missing": {"incus.revsolns.net"}}
 	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "must also be listed in provisioners")
 
 	configured.TrustedEABPolicy.AllowWithoutEAB = nil
@@ -40,15 +40,18 @@ func TestTrustedEABPolicyValidation(t *testing.T) {
 }
 
 func TestTrustedEABPolicyResolverDefaultsClosedAndScopesByName(t *testing.T) {
-	resolver := &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme", "incus"}, AllowWithoutEAB: []string{"incus"}}
+	resolver := &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme", "incus"}, AllowWithoutEAB: map[string][]string{"incus": {"incus.revsolns.net"}}}
 	require.True(t, resolver.EnabledForProvisioner("acme"))
 	require.True(t, resolver.EnabledForProvisioner("incus"))
 	require.False(t, resolver.EnabledForProvisioner("other"))
 	require.False(t, resolver.AllowWithoutEABForProvisioner("acme"))
 	require.True(t, resolver.AllowWithoutEABForProvisioner("incus"))
+	require.True(t, resolver.IsDNSAllowedWithoutEAB("incus", "incus.revsolns.net"))
+	require.False(t, resolver.IsDNSAllowedWithoutEAB("incus", "other.revsolns.net"))
 	require.False(t, resolver.AllowWithoutEABForProvisioner("other"))
 	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).EnabledForProvisioner("acme"))
 	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).AllowWithoutEABForProvisioner("incus"))
+	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).IsDNSAllowedWithoutEAB("incus", "incus.revsolns.net"))
 }
 
 func TestConfigValidate(t *testing.T) {

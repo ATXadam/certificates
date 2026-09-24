@@ -217,10 +217,12 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	trustedPolicy := false
 	trustedWithoutEAB := false
+	var trustedResolver provisioner.TrustedACMEPolicyResolver
 	if resolverCA, ok := ca.(interface {
 		GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver
 	}); ok {
 		if resolver := resolverCA.GetTrustedACMEPolicyResolver(); resolver != nil {
+			trustedResolver = resolver
 			trustedPolicy = resolver.EnabledForProvisioner(acmeProv.GetName())
 			trustedWithoutEAB = trustedPolicy && resolver.AllowWithoutEABForProvisioner(acmeProv.GetName())
 		}
@@ -241,15 +243,6 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires a bound EAB with a non-empty policy"))
 		return
 	}
-	if trustedWithoutEAB && !hasPositiveProvisionerDNSPolicy(acmeProv) {
-		logSecurityEvent(ctx, "trusted_authorization_decision",
-			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
-			"identifiers", nor.Identifiers, "result", "denied", "reason", "missing_positive_provisioner_policy",
-		)
-		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB requires a positive DNS provisioner policy"))
-		return
-	}
-
 	acmePolicy, err := newACMEPolicyEngine(eak)
 	if err != nil {
 		render.Error(w, r, acme.WrapErrorISE(err, "error creating ACME policy engine"))
@@ -263,6 +256,14 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 				"identifiers", nor.Identifiers, "result", "denied", "reason", "unsupported_identifier_type",
 			)
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
+			return
+		}
+		if trustedWithoutEAB && !trustedResolver.IsDNSAllowedWithoutEAB(acmeProv.GetName(), identifier.Value) {
+			logSecurityEvent(ctx, "trusted_authorization_decision",
+				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"identifiers", nor.Identifiers, "result", "denied", "reason", "non_eab_dns_policy",
+			)
+			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted non-EAB authorization does not allow DNS name %s", identifier.Value))
 			return
 		}
 		// Evaluate the account policy only on the EAB-backed path. The explicit
@@ -421,15 +422,6 @@ func hasNonEmptyACMEPolicy(eak *acme.ExternalAccountKey) bool {
 	// an explicit positive DNS allow-list; deny-only, wildcard-only, and
 	// IP-only policies must not expand the trust boundary.
 	return len(x509Policy.Allowed.DNSNames) > 0
-}
-
-func hasPositiveProvisionerDNSPolicy(acmeProv *provisioner.ACME) bool {
-	if acmeProv == nil {
-		return false
-	}
-	x509Options := acmeProv.GetOptions().GetX509Options()
-	allowed := x509Options.GetAllowedNameOptions()
-	return allowed != nil && len(allowed.DNSDomains) > 0
 }
 
 func trimIfWildcard(value string) (string, bool) {
@@ -858,8 +850,6 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 		if !hasNonEmptyACMEPolicy(eak) {
 			return reject("account_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty"))
 		}
-	} else if !hasPositiveProvisionerDNSPolicy(acmeProv) {
-		return reject("provisioner_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB requires a positive DNS provisioner policy"))
 	}
 	for _, identifier := range o.Identifiers {
 		if identifier.Type != acme.DNS {
@@ -869,6 +859,8 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 			if err := isIdentifierAllowedMust(eak, identifier); err != nil {
 				return reject("account_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order"))
 			}
+		} else if !resolver.IsDNSAllowedWithoutEAB(acmeProv.GetName(), identifier.Value) {
+			return reject("non_eab_dns_policy", acme.NewError(acme.ErrorRejectedIdentifierType, "current trusted non-EAB policy rejected DNS name %s", identifier.Value))
 		}
 	}
 	fields := []any{

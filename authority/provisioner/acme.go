@@ -130,14 +130,15 @@ type ACME struct {
 type TrustedACMEPolicyResolver interface {
 	EnabledForProvisioner(name string) bool
 	AllowWithoutEABForProvisioner(name string) bool
+	IsDNSAllowedWithoutEAB(name, dns string) bool
 }
 
 // TrustedACMEPolicyConfig enables trusted EAB-policy authorization for an
 // explicit set of ACME provisioner names.
 type TrustedACMEPolicyConfig struct {
-	Enabled         bool     `json:"enabled,omitempty"`
-	Provisioners    []string `json:"provisioners,omitempty"`
-	AllowWithoutEAB []string `json:"allow_without_eab,omitempty"`
+	Enabled         bool                `json:"enabled,omitempty"`
+	Provisioners    []string            `json:"provisioners,omitempty"`
+	AllowWithoutEAB map[string][]string `json:"allow_without_eab,omitempty"`
 }
 
 // EnabledForProvisioner implements TrustedACMEPolicyResolver.
@@ -154,14 +155,25 @@ func (c *TrustedACMEPolicyConfig) EnabledForProvisioner(name string) bool {
 }
 
 // AllowWithoutEABForProvisioner reports whether trusted authorization may be
-// used without an account-level EAB policy for the named provisioner. Runtime
-// order validation still requires an explicit positive DNS provisioner policy.
+// used without an account-level EAB policy for the named provisioner. The
+// allow_without_eab map itself is the positive DNS authorization boundary.
 func (c *TrustedACMEPolicyConfig) AllowWithoutEABForProvisioner(name string) bool {
 	if c == nil || !c.Enabled {
 		return false
 	}
-	for _, configured := range c.AllowWithoutEAB {
-		if configured == name {
+	names, ok := c.AllowWithoutEAB[name]
+	return ok && len(names) > 0
+}
+
+// IsDNSAllowedWithoutEAB checks the exact DNS allow-list for a trusted
+// non-EAB provisioner. Wildcard/pattern expansion is intentionally not
+// supported here; entries are exact DNS identifiers.
+func (c *TrustedACMEPolicyConfig) IsDNSAllowedWithoutEAB(name, dns string) bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	for _, allowed := range c.AllowWithoutEAB[name] {
+		if allowed == dns {
 			return true
 		}
 	}
@@ -191,15 +203,26 @@ func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool)
 		}
 		enabled[name] = true
 	}
-	allowWithout := make(map[string]bool, len(c.AllowWithoutEAB))
-	for _, name := range c.AllowWithoutEAB {
+	for name, dnsNames := range c.AllowWithoutEAB {
 		if name == "" {
 			return errors.New("trusted_eab_policy allow_without_eab provisioner name cannot be empty")
 		}
 		if !enabled[name] {
 			return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q must also be listed in provisioners", name)
 		}
-		allowWithout[name] = true
+		if len(dnsNames) == 0 {
+			return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q requires at least one DNS name", name)
+		}
+		seen := make(map[string]bool, len(dnsNames))
+		for _, dns := range dnsNames {
+			if dns == "" {
+				return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q contains an empty DNS name", name)
+			}
+			if seen[dns] {
+				return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q contains duplicate DNS name %q", name, dns)
+			}
+			seen[dns] = true
+		}
 	}
 	for _, name := range c.Provisioners {
 		found := false
@@ -212,7 +235,8 @@ func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool)
 			if !ok {
 				return errors.Errorf("trusted_eab_policy provisioner %q must be an ACME provisioner", name)
 			}
-			if allowWithout[name] {
+			_, withoutEAB := c.AllowWithoutEAB[name]
+			if withoutEAB {
 				if acme.RequireEAB {
 					return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q requires requireEAB=false", name)
 				}
