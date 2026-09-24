@@ -434,6 +434,39 @@ func newAuthorizationWithTrust(ctx context.Context, az *acme.Authorization, trus
 
 	var err error
 	if trusted {
+		prov := acme.MustProvisionerFromContext(ctx)
+		az.Token, err = randutil.Alphanumeric(32)
+		if err != nil {
+			return acme.WrapErrorISE(err, "error generating random alphanumeric ID")
+		}
+
+		var trustedType acme.ChallengeType
+		for _, typ := range chTypes {
+			if prov.IsChallengeEnabled(ctx, provisioner.ACMEChallenge(typ)) {
+				trustedType = typ
+				break
+			}
+		}
+		if trustedType == "" {
+			return acme.NewError(acme.ErrorServerInternalType, "trusted authorization has no enabled challenge type")
+		}
+
+		ch := &acme.Challenge{
+			AccountID:   az.AccountID,
+			Value:       az.Identifier.Value,
+			Type:        trustedType,
+			Token:       az.Token,
+			Status:      acme.StatusPending,
+			ValidatedAt: clock.Now().Format(time.RFC3339),
+		}
+		if err := db.CreateChallenge(ctx, ch); err != nil {
+			return acme.WrapErrorISE(err, "error creating trusted authorization challenge")
+		}
+		ch.Status = acme.StatusValid
+		if err := db.UpdateChallenge(ctx, ch); err != nil {
+			return acme.WrapErrorISE(err, "error validating trusted authorization challenge")
+		}
+		az.Challenges = []*acme.Challenge{ch}
 		az.Status = acme.StatusValid
 		return db.CreateAuthorization(ctx, az)
 	}
