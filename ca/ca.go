@@ -609,46 +609,51 @@ func (ca *CA) Reload() error {
 // get TLSConfig returns separate TLSConfigs for server and client with the
 // same self-renewing certificate.
 func (ca *CA) getTLSConfig(auth *authority.Authority) (*tls.Config, *tls.Config, error) {
-	// Create initial TLS certificate
-	tlsCrt, err := auth.GetTLSCertificate()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Start tls renewer with the new certificate.
-	// If a renewer was started, attempt to stop it before.
-	if ca.renewer != nil {
-		ca.renewer.Stop()
-	}
-
-	ca.renewer, err = NewTLSRenewer(tlsCrt, auth.GetTLSCertificate)
-	if err != nil {
-		return nil, nil, err
-	}
-	ca.renewer.Run()
-
 	var serverTLSConfig *tls.Config
 	if ca.config.TLS != nil {
 		serverTLSConfig = ca.config.TLS.TLSConfig()
 	} else {
-		serverTLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
+		serverTLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 
-	// GetCertificate will only be called if the client supplies SNI
-	// information or if tlsConfig.Certificates is empty.
-	// When client requests are made using an IP address (as opposed to a domain
-	// name) the server does not receive any SNI and may fallback to using the
-	// first entry in the Certificates attribute; by setting the attribute to
-	// empty we are implicitly forcing GetCertificate to be the only mechanism
-	// by which the server can find it's own leaf Certificate.
-	serverTLSConfig.Certificates = []tls.Certificate{}
-
-	clientTLSConfig := serverTLSConfig.Clone()
-
-	serverTLSConfig.GetCertificate = ca.renewer.GetCertificateForCA
-	clientTLSConfig.GetClientCertificate = ca.renewer.GetClientCertificate
+	var clientTLSConfig *tls.Config
+	var tlsCrt tls.Certificate
+	if ca.config.ServerTLS != nil {
+		loaded, err := tls.LoadX509KeyPair(ca.config.ServerTLS.CertFile, ca.config.ServerTLS.KeyFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed loading static server TLS certificate: %w", err)
+		}
+		tlsCrt = loaded
+		if len(tlsCrt.Certificate) == 0 {
+			return nil, nil, errors.New("static server TLS certificate chain is empty")
+		}
+		leaf, err := x509.ParseCertificate(tlsCrt.Certificate[0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed parsing static server TLS certificate: %w", err)
+		}
+		tlsCrt.Leaf = leaf
+		serverTLSConfig.Certificates = []tls.Certificate{tlsCrt}
+		clientTLSConfig = serverTLSConfig.Clone()
+		clientTLSConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &tlsCrt, nil }
+	} else {
+		issued, err := auth.GetTLSCertificate()
+		if err != nil {
+			return nil, nil, err
+		}
+		tlsCrt = *issued
+		if ca.renewer != nil {
+			ca.renewer.Stop()
+		}
+		ca.renewer, err = NewTLSRenewer(&tlsCrt, auth.GetTLSCertificate)
+		if err != nil {
+			return nil, nil, err
+		}
+		ca.renewer.Run()
+		serverTLSConfig.Certificates = []tls.Certificate{}
+		clientTLSConfig = serverTLSConfig.Clone()
+		serverTLSConfig.GetCertificate = ca.renewer.GetCertificateForCA
+		clientTLSConfig.GetClientCertificate = ca.renewer.GetClientCertificate
+	}
 
 	// initialize a certificate pool with root CA certificates to trust when doing mTLS.
 	certPool := x509.NewCertPool()

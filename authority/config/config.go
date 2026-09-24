@@ -79,6 +79,7 @@ type Config struct {
 	Monitoring       json.RawMessage      `json:"monitoring,omitempty"`
 	AuthorityConfig  *AuthConfig          `json:"authority,omitempty"`
 	TLS              *TLSOptions          `json:"tls,omitempty"`
+	ServerTLS        *ServerTLSConfig     `json:"serverTLS,omitempty"`
 	Password         string               `json:"password,omitempty"`
 	Templates        *templates.Templates `json:"templates,omitempty"`
 	CommonName       string               `json:"commonName,omitempty"`
@@ -88,6 +89,26 @@ type Config struct {
 
 	// Keeps record of the filename the Config is read from
 	loadedFromFilepath string
+}
+
+// ServerTLSConfig configures a static certificate and key for the CA HTTPS server.
+type ServerTLSConfig struct {
+	CertFile string `json:"certFile"`
+	KeyFile  string `json:"keyFile"`
+}
+
+// Validate validates static server TLS configuration.
+func (c *ServerTLSConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.CertFile == "" {
+		return errors.New("serverTLS.certFile cannot be empty")
+	}
+	if c.KeyFile == "" {
+		return errors.New("serverTLS.keyFile cannot be empty")
+	}
+	return nil
 }
 
 // CRLConfig represents config options for CRL generation
@@ -354,6 +375,10 @@ func (c *Config) Validate() error {
 			return errors.New("tls minVersion cannot exceed tls maxVersion")
 		}
 		c.TLS.Renegotiation = c.TLS.Renegotiation || DefaultTLSOptions.Renegotiation
+	}
+
+	if err := c.ServerTLS.Validate(); err != nil {
+		return err
 	}
 
 	// Validate KMS options, nil is ok.
