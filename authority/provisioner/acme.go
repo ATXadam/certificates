@@ -129,13 +129,15 @@ type ACME struct {
 // reloads cannot drop or change the broker policy.
 type TrustedACMEPolicyResolver interface {
 	EnabledForProvisioner(name string) bool
+	AllowWithoutEABForProvisioner(name string) bool
 }
 
 // TrustedACMEPolicyConfig enables trusted EAB-policy authorization for an
 // explicit set of ACME provisioner names.
 type TrustedACMEPolicyConfig struct {
-	Enabled      bool     `json:"enabled,omitempty"`
-	Provisioners []string `json:"provisioners,omitempty"`
+	Enabled         bool     `json:"enabled,omitempty"`
+	Provisioners    []string `json:"provisioners,omitempty"`
+	AllowWithoutEAB []string `json:"allow_without_eab,omitempty"`
 }
 
 // EnabledForProvisioner implements TrustedACMEPolicyResolver.
@@ -151,20 +153,55 @@ func (c *TrustedACMEPolicyConfig) EnabledForProvisioner(name string) bool {
 	return false
 }
 
+// AllowWithoutEABForProvisioner reports whether trusted authorization may be
+// used without an account-level EAB policy for the named provisioner. Runtime
+// order validation still requires an explicit positive DNS provisioner policy.
+func (c *TrustedACMEPolicyConfig) AllowWithoutEABForProvisioner(name string) bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	for _, configured := range c.AllowWithoutEAB {
+		if configured == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks static provisioners when available. Admin-managed
 // deployments may load provisioners later; the order path checks them again
 // and fails closed if RequireEAB is not enabled.
 func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool) error {
-	if c == nil || !c.Enabled {
+	if c == nil {
+		return nil
+	}
+	if !c.Enabled {
+		if len(c.AllowWithoutEAB) > 0 {
+			return errors.New("trusted_eab_policy.allow_without_eab requires enabled=true")
+		}
 		return nil
 	}
 	if len(c.Provisioners) == 0 {
 		return errors.New("trusted_eab_policy.enabled requires at least one provisioner")
 	}
+	enabled := make(map[string]bool, len(c.Provisioners))
 	for _, name := range c.Provisioners {
 		if name == "" {
 			return errors.New("trusted_eab_policy provisioner name cannot be empty")
 		}
+		enabled[name] = true
+	}
+	allowWithout := make(map[string]bool, len(c.AllowWithoutEAB))
+	for _, name := range c.AllowWithoutEAB {
+		if name == "" {
+			return errors.New("trusted_eab_policy allow_without_eab provisioner name cannot be empty")
+		}
+		if !enabled[name] {
+			return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q must also be listed in provisioners", name)
+		}
+		allowWithout[name] = true
+	}
+	for _, name := range c.Provisioners {
 		found := false
 		for _, p := range provisioners {
 			if p.GetName() != name {
@@ -172,7 +209,14 @@ func (c *TrustedACMEPolicyConfig) Validate(provisioners List, adminManaged bool)
 			}
 			found = true
 			acme, ok := p.(*ACME)
-			if !ok || !acme.RequireEAB {
+			if !ok {
+				return errors.Errorf("trusted_eab_policy provisioner %q must be an ACME provisioner", name)
+			}
+			if allowWithout[name] {
+				if acme.RequireEAB {
+					return errors.Errorf("trusted_eab_policy allow_without_eab provisioner %q requires requireEAB=false", name)
+				}
+			} else if !acme.RequireEAB {
 				return errors.Errorf("trusted_eab_policy provisioner %q requires requireEAB=true", name)
 			}
 		}

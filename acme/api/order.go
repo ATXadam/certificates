@@ -216,27 +216,37 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	trustedPolicy := false
+	trustedWithoutEAB := false
 	if resolverCA, ok := ca.(interface {
 		GetTrustedACMEPolicyResolver() provisioner.TrustedACMEPolicyResolver
 	}); ok {
 		if resolver := resolverCA.GetTrustedACMEPolicyResolver(); resolver != nil {
 			trustedPolicy = resolver.EnabledForProvisioner(acmeProv.GetName())
+			trustedWithoutEAB = trustedPolicy && resolver.AllowWithoutEABForProvisioner(acmeProv.GetName())
 		}
 	}
-	if trustedPolicy && !acmeProv.RequireEAB {
+	if trustedPolicy && !acmeProv.RequireEAB && !trustedWithoutEAB {
 		logSecurityEvent(ctx, "trusted_authorization_decision",
 			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
 			"identifiers", nor.Identifiers, "result", "denied", "reason", "require_eab_disabled",
 		)
-		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires requireEAB=true on the provisioner"))
+		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB is not enabled for this provisioner"))
 		return
 	}
-	if trustedPolicy && !hasNonEmptyACMEPolicy(eak) {
+	if trustedPolicy && acmeProv.RequireEAB && !hasNonEmptyACMEPolicy(eak) {
 		logSecurityEvent(ctx, "trusted_authorization_decision",
 			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
 			"identifiers", nor.Identifiers, "result", "denied", "reason", "missing_positive_account_policy",
 		)
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires a bound EAB with a non-empty policy"))
+		return
+	}
+	if trustedWithoutEAB && !hasPositiveProvisionerDNSPolicy(acmeProv) {
+		logSecurityEvent(ctx, "trusted_authorization_decision",
+			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"identifiers", nor.Identifiers, "result", "denied", "reason", "missing_positive_provisioner_policy",
+		)
+		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB requires a positive DNS provisioner policy"))
 		return
 	}
 
@@ -255,20 +265,23 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
 			return
 		}
-		// evaluate the ACME account level policy
-		if err = isIdentifierAllowed(acmePolicy, identifier); err != nil {
-			logSecurityEvent(ctx, "acme_policy_rejection",
-				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
-				"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
-			)
-			if trustedPolicy {
-				logSecurityEvent(ctx, "trusted_authorization_decision",
+		// Evaluate the account policy only on the EAB-backed path. The explicit
+		// non-EAB path is constrained by a positive provisioner DNS policy.
+		if acmeProv.RequireEAB {
+			if err = isIdentifierAllowed(acmePolicy, identifier); err != nil {
+				logSecurityEvent(ctx, "acme_policy_rejection",
 					"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
 					"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
 				)
+				if trustedPolicy {
+					logSecurityEvent(ctx, "trusted_authorization_decision",
+						"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+						"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
+					)
+				}
+				render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
+				return
 			}
-			render.Error(w, r, acme.WrapError(acme.ErrorRejectedIdentifierType, err, "not authorized"))
-			return
 		}
 		// evaluate the provisioner level policy
 		orderIdentifier := provisioner.ACMEIdentifier{Type: provisioner.ACMEIdentifierType(identifier.Type), Value: identifier.Value}
@@ -408,6 +421,15 @@ func hasNonEmptyACMEPolicy(eak *acme.ExternalAccountKey) bool {
 	// an explicit positive DNS allow-list; deny-only, wildcard-only, and
 	// IP-only policies must not expand the trust boundary.
 	return len(x509Policy.Allowed.DNSNames) > 0
+}
+
+func hasPositiveProvisionerDNSPolicy(acmeProv *provisioner.ACME) bool {
+	if acmeProv == nil {
+		return false
+	}
+	x509Options := acmeProv.GetOptions().GetX509Options()
+	allowed := x509Options.GetAllowedNameOptions()
+	return allowed != nil && len(allowed.DNSDomains) > 0
 }
 
 func trimIfWildcard(value string) (string, bool) {
@@ -822,19 +844,31 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 	if !ok || resolverCA.GetTrustedACMEPolicyResolver() == nil || !resolverCA.GetTrustedACMEPolicyResolver().EnabledForProvisioner(acmeProv.GetName()) {
 		return reject("trusted_overlay_disabled", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization is no longer enabled"))
 	}
-	eak, err := db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), o.AccountID)
-	if err != nil {
-		return reject("eab_binding_unavailable", acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable"))
+	resolver := resolverCA.GetTrustedACMEPolicyResolver()
+	trustedWithoutEAB := !acmeProv.RequireEAB && resolver.AllowWithoutEABForProvisioner(acmeProv.GetName())
+	if !acmeProv.RequireEAB && !trustedWithoutEAB {
+		return reject("trusted_without_eab_disabled", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB is no longer enabled"))
 	}
-	if !hasNonEmptyACMEPolicy(eak) {
-		return reject("account_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty"))
+	var eak *acme.ExternalAccountKey
+	if acmeProv.RequireEAB {
+		eak, err = db.GetExternalAccountKeyByAccountID(ctx, prov.GetIDForToken(), o.AccountID)
+		if err != nil {
+			return reject("eab_binding_unavailable", acme.WrapError(acme.ErrorUnauthorizedType, err, "trusted authorization EAB binding is unavailable"))
+		}
+		if !hasNonEmptyACMEPolicy(eak) {
+			return reject("account_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization policy is empty"))
+		}
+	} else if !hasPositiveProvisionerDNSPolicy(acmeProv) {
+		return reject("provisioner_policy_missing_or_empty", acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB requires a positive DNS provisioner policy"))
 	}
 	for _, identifier := range o.Identifiers {
 		if identifier.Type != acme.DNS {
 			return reject("unsupported_identifier_type", acme.NewError(acme.ErrorRejectedIdentifierType, "trusted authorization does not support identifier type %s", identifier.Type))
 		}
-		if err := isIdentifierAllowedMust(eak, identifier); err != nil {
-			return reject("account_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order"))
+		if acmeProv.RequireEAB {
+			if err := isIdentifierAllowedMust(eak, identifier); err != nil {
+				return reject("account_policy", acme.WrapError(acme.ErrorRejectedIdentifierType, err, "current account policy rejected order"))
+			}
 		}
 	}
 	fields := []any{

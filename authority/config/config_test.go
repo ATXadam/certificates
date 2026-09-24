@@ -24,15 +24,31 @@ func TestTrustedEABPolicyValidation(t *testing.T) {
 	acme.RequireEAB = false
 	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "requires requireEAB=true")
 
+	configured.TrustedEABPolicy.AllowWithoutEAB = []string{"acme"}
+	require.NoError(t, configured.Validate(provisioner.Audiences{}))
+
+	acme.RequireEAB = true
+	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "requires requireEAB=false")
+	acme.RequireEAB = false
+
+	configured.TrustedEABPolicy.AllowWithoutEAB = []string{"missing"}
+	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "must also be listed in provisioners")
+
+	configured.TrustedEABPolicy.AllowWithoutEAB = nil
 	configured.TrustedEABPolicy.Provisioners = []string{"missing"}
 	require.ErrorContains(t, configured.Validate(provisioner.Audiences{}), "was not found")
 }
 
 func TestTrustedEABPolicyResolverDefaultsClosedAndScopesByName(t *testing.T) {
-	resolver := &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme"}}
+	resolver := &provisioner.TrustedACMEPolicyConfig{Enabled: true, Provisioners: []string{"acme", "incus"}, AllowWithoutEAB: []string{"incus"}}
 	require.True(t, resolver.EnabledForProvisioner("acme"))
+	require.True(t, resolver.EnabledForProvisioner("incus"))
 	require.False(t, resolver.EnabledForProvisioner("other"))
+	require.False(t, resolver.AllowWithoutEABForProvisioner("acme"))
+	require.True(t, resolver.AllowWithoutEABForProvisioner("incus"))
+	require.False(t, resolver.AllowWithoutEABForProvisioner("other"))
 	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).EnabledForProvisioner("acme"))
+	require.False(t, (&provisioner.TrustedACMEPolicyConfig{}).AllowWithoutEABForProvisioner("incus"))
 }
 
 func TestConfigValidate(t *testing.T) {

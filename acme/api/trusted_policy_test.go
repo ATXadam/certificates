@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/smallstep/certificates/acme"
+	"github.com/smallstep/certificates/authority/policy"
+	"github.com/smallstep/certificates/authority/provisioner"
 )
 
 func TestHasNonEmptyACMEPolicy(t *testing.T) {
@@ -92,6 +94,26 @@ func TestNewAuthorizationWithTrustPrefersHTTP01ForNonWildcardDNS(t *testing.T) {
 	}
 	if len(az.Challenges) != 1 || az.Challenges[0].Type != acme.HTTP01 || az.Challenges[0].Status != acme.StatusValid {
 		t.Fatalf("trusted challenge = %#v, want one already-valid http-01 challenge", az.Challenges)
+	}
+}
+
+func TestHasPositiveProvisionerDNSPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		prov *provisioner.ACME
+		want bool
+	}{
+		{name: "nil"},
+		{name: "no options", prov: &provisioner.ACME{}},
+		{name: "empty x509", prov: &provisioner.ACME{Options: &provisioner.Options{X509: &provisioner.X509Options{}}}},
+		{name: "dns allow", prov: &provisioner.ACME{Options: &provisioner.Options{X509: &provisioner.X509Options{AllowedNames: &policy.X509NameOptions{DNSDomains: []string{"incus.revsolns.net"}}}}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasPositiveProvisionerDNSPolicy(tt.prov); got != tt.want {
+				t.Fatalf("hasPositiveProvisionerDNSPolicy() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
