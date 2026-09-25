@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -466,5 +467,57 @@ func TestDB_GetCertificateBySerial(t *testing.T) {
 				assert.Equals(t, cert.Intermediates, []*x509.Certificate{inter, root})
 			}
 		})
+	}
+}
+
+func TestDB_CreateCertificate_ReusedSerial(t *testing.T) {
+	leaf, err := pemutil.ReadCertificate("../../../authority/testdata/certs/foo.crt")
+	assert.FatalError(t, err)
+	inter, err := pemutil.ReadCertificate("../../../authority/testdata/certs/intermediate_ca.crt")
+	assert.FatalError(t, err)
+
+	rawDB, err := nosql.New("badgerv2", t.TempDir())
+	assert.FatalError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	d, err := New(rawDB)
+	assert.FatalError(t, err)
+
+	first := &acme.Certificate{AccountID: "account-1", OrderID: "order-1", Leaf: leaf, Intermediates: []*x509.Certificate{inter}}
+	assert.FatalError(t, d.CreateCertificate(context.Background(), first))
+	second := &acme.Certificate{AccountID: "account-2", OrderID: "order-2", Leaf: leaf, Intermediates: []*x509.Certificate{inter}}
+	assert.FatalError(t, d.CreateCertificate(context.Background(), second))
+
+	if first.ID == second.ID {
+		t.Fatalf("certificate IDs unexpectedly equal: %s", first.ID)
+	}
+	gotSecond, err := d.GetCertificate(context.Background(), second.ID)
+	assert.FatalError(t, err)
+	assert.Equals(t, gotSecond.AccountID, "account-2")
+	assert.Equals(t, gotSecond.OrderID, "order-2")
+	assert.Equals(t, gotSecond.Leaf.Raw, leaf.Raw)
+
+	bySerial, err := d.GetCertificateBySerial(context.Background(), leaf.SerialNumber.String())
+	assert.FatalError(t, err)
+	assert.Equals(t, bySerial.Leaf.Raw, leaf.Raw)
+}
+
+func TestDB_CreateCertificate_ReusedSerialDifferentCertificateFails(t *testing.T) {
+	leaf, err := pemutil.ReadCertificate("../../../authority/testdata/certs/foo.crt")
+	assert.FatalError(t, err)
+	other, err := pemutil.ReadCertificate("../../../authority/testdata/certs/intermediate_ca.crt")
+	assert.FatalError(t, err)
+	other.SerialNumber = new(big.Int).Set(leaf.SerialNumber)
+
+	rawDB, err := nosql.New("badgerv2", t.TempDir())
+	assert.FatalError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	d, err := New(rawDB)
+	assert.FatalError(t, err)
+
+	first := &acme.Certificate{AccountID: "account-1", OrderID: "order-1", Leaf: leaf}
+	assert.FatalError(t, d.CreateCertificate(context.Background(), first))
+	second := &acme.Certificate{AccountID: "account-2", OrderID: "order-2", Leaf: other}
+	if err := d.CreateCertificate(context.Background(), second); err == nil {
+		t.Fatal("CreateCertificate() succeeded for same serial with different certificate bytes")
 	}
 }

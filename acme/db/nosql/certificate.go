@@ -1,6 +1,7 @@
 package nosql
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -64,7 +65,44 @@ func (db *DB) CreateCertificate(ctx context.Context, cert *acme.Certificate) err
 		Serial:        serial,
 		CertificateID: cert.ID,
 	}
-	return db.save(ctx, serial, dbSerial, nil, "serial", certBySerialTable)
+	if err := db.save(ctx, serial, dbSerial, nil, "serial", certBySerialTable); err != nil {
+		// External CAs may legitimately return the exact same certificate for
+		// multiple downstream ACME orders. Keep a distinct certificate record
+		// per order/account, but allow the serial index to remain pointed at its
+		// original canonical record when the indexed certificate bytes are
+		// identical. A same-serial/different-certificate collision still fails.
+		same, verifyErr := db.serialIndexesCertificate(ctx, serial, cert)
+		if verifyErr == nil && same {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (db *DB) serialIndexesCertificate(ctx context.Context, serial string, cert *acme.Certificate) (bool, error) {
+	b, err := db.db.Get(certBySerialTable, []byte(serial))
+	if err != nil {
+		return false, err
+	}
+
+	indexed := new(dbSerial)
+	if err := json.Unmarshal(b, indexed); err != nil {
+		return false, err
+	}
+	existing, err := db.GetCertificate(ctx, indexed.CertificateID)
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(existing.Leaf.Raw, cert.Leaf.Raw) || len(existing.Intermediates) != len(cert.Intermediates) {
+		return false, nil
+	}
+	for i := range existing.Intermediates {
+		if !bytes.Equal(existing.Intermediates[i].Raw, cert.Intermediates[i].Raw) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // GetCertificate retrieves and unmarshals an ACME certificate type from the
