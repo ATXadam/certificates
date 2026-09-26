@@ -108,7 +108,7 @@ func (h *acmeAdminResponder) GetExternalAccountKeys(w http.ResponseWriter, r *ht
 	if reference := chi.URLParam(r, "reference"); reference != "" {
 		key, err := db.GetExternalAccountKeyByReference(ctx, provisionerID, reference)
 		if err != nil {
-			render.Error(w, r, admin.WrapErrorISE(err, "error retrieving ACME EAB key"))
+			render.Error(w, r, externalAccountKeyLookupError(err))
 			return
 		}
 		if key == nil {
@@ -133,6 +133,13 @@ func (h *acmeAdminResponder) GetExternalAccountKeys(w http.ResponseWriter, r *ht
 		response.EAKs = append(response.EAKs, eakToLinked(key))
 	}
 	render.JSON(w, r, response)
+}
+
+func externalAccountKeyLookupError(err error) error {
+	if acme.IsErrNotFound(err) {
+		return admin.NewError(admin.ErrorNotFoundType, "ACME EAB key does not exist")
+	}
+	return admin.WrapErrorISE(err, "error retrieving ACME EAB key")
 }
 
 // CreateExternalAccountKey writes the response for the EAB key POST endpoint

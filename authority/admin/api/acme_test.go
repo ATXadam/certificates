@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -551,6 +553,26 @@ func Test_linkedEAKToCertificates(t *testing.T) {
 			if got := linkedEAKToCertificates(tt.k); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("linkedEAKToCertificates() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestExternalAccountKeyLookupError(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		statusCode int
+	}{
+		{"not found", acme.ErrNotFound, http.StatusNotFound},
+		{"wrapped not found", fmt.Errorf("lookup failed: %w", acme.ErrNotFound), http.StatusNotFound},
+		{"database failure", errors.New("database unavailable"), http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := externalAccountKeyLookupError(tt.err)
+			var adminErr *admin.Error
+			assert.True(t, errors.As(err, &adminErr))
+			assert.Equals(t, tt.statusCode, adminErr.StatusCode())
 		})
 	}
 }
