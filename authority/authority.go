@@ -54,15 +54,17 @@ type Authority struct {
 	httpClient    provisioner.HTTPClient
 
 	// X509 CA
-	password              []byte
-	issuerPassword        []byte
-	x509CAService         cas.CertificateAuthorityService
-	rootX509Certs         []*x509.Certificate
-	rootX509CertPool      *x509.CertPool
-	federatedX509Certs    []*x509.Certificate
-	intermediateX509Certs []*x509.Certificate
-	certificates          *sync.Map
-	x509Enforcers         []provisioner.CertificateEnforcer
+	password               []byte
+	issuerPassword         []byte
+	x509CAService          cas.CertificateAuthorityService
+	adminX509CAService     cas.CertificateAuthorityService
+	adminLocalProvisioners map[string]struct{}
+	rootX509Certs          []*x509.Certificate
+	rootX509CertPool       *x509.CertPool
+	federatedX509Certs     []*x509.Certificate
+	intermediateX509Certs  []*x509.Certificate
+	certificates           *sync.Map
+	x509Enforcers          []provisioner.CertificateEnforcer
 
 	// SCEP CA
 	scepOptions    *scep.Options
@@ -379,6 +381,28 @@ func (a *Authority) init() error {
 		}
 
 		a.keyManager = newInstrumentedKeyManager(a.keyManager, a.meter)
+	}
+
+	// Initialize the optional local X.509 signer used for explicitly configured
+	// administrative JWK provisioners. This is intentionally independent from
+	// the primary CAS (for example, an ExternalCAS).
+	if local := a.config.AuthorityConfig.AdminLocalSigning; local != nil {
+		chain, err := pemutil.ReadCertificateBundle(local.CertFile)
+		if err != nil {
+			return errors.Wrap(err, "error reading authority.adminLocalSigning.crt")
+		}
+		signer, err := a.keyManager.CreateSigner(&kmsapi.CreateSignerRequest{SigningKey: local.KeyFile})
+		if err != nil {
+			return errors.Wrap(err, "error loading authority.adminLocalSigning.key")
+		}
+		a.adminX509CAService, err = cas.New(ctx, casapi.Options{Type: casapi.SoftCAS, CertificateChain: chain, Signer: signer})
+		if err != nil {
+			return errors.Wrap(err, "error initializing authority.adminLocalSigning")
+		}
+		a.adminLocalProvisioners = make(map[string]struct{}, len(local.Provisioners))
+		for _, name := range local.Provisioners {
+			a.adminLocalProvisioners[name] = struct{}{}
+		}
 	}
 
 	// Initialize linkedca client if necessary. On a linked RA, the issuer

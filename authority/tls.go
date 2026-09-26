@@ -299,7 +299,12 @@ func (a *Authority) signX509(ctx context.Context, csr *x509.CertificateRequest, 
 	// Sign certificate
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore.Add(signOpts.Backdate))
 
-	resp, err := a.x509CAService.CreateCertificate(&casapi.CreateCertificateRequest{
+	caService, err := a.x509CAServiceForProvisioner(prov)
+	if err != nil {
+		return nil, prov, err
+	}
+
+	resp, err := caService.CreateCertificate(&casapi.CreateCertificateRequest{
 		Template:    leaf,
 		CSR:         csr,
 		Lifetime:    lifetime,
@@ -324,6 +329,19 @@ func (a *Authority) signX509(ctx context.Context, csr *x509.CertificateRequest, 
 	}
 
 	return chain, prov, nil
+}
+
+func (a *Authority) x509CAServiceForProvisioner(prov provisioner.Interface) (casapi.CertificateAuthorityService, error) {
+	if prov == nil || prov.GetType() != provisioner.TypeJWK {
+		return a.x509CAService, nil
+	}
+	if _, ok := a.adminLocalProvisioners[prov.GetName()]; !ok {
+		return a.x509CAService, nil
+	}
+	if a.adminX509CAService == nil {
+		return nil, errs.InternalServer("authority.Sign; local admin signing service is not initialized")
+	}
+	return a.adminX509CAService, nil
 }
 
 // isAllowedToSignX509Certificate checks if the Authority is allowed

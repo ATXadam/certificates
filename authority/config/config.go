@@ -177,6 +177,49 @@ type ASN1DN struct {
 // AuthConfig represents the configuration options for the authority. An
 // underlaying registration authority can also be configured using the
 // cas.Options.
+// AdminLocalSigningConfig configures a local SoftCAS used only for explicitly
+// named JWK provisioners that issue certificates for administrative x5c auth.
+type AdminLocalSigningConfig struct {
+	Provisioners []string `json:"provisioners"`
+	CertFile     string   `json:"crt"`
+	KeyFile      string   `json:"key"`
+}
+
+func (c *AdminLocalSigningConfig) Validate(provisioners provisioner.List, enableAdmin bool) error {
+	if c == nil {
+		return nil
+	}
+	if !enableAdmin {
+		return errors.New("authority.adminLocalSigning requires enableAdmin")
+	}
+	if len(c.Provisioners) == 0 {
+		return errors.New("authority.adminLocalSigning.provisioners cannot be empty")
+	}
+	if c.CertFile == "" || c.KeyFile == "" {
+		return errors.New("authority.adminLocalSigning.crt and key cannot be empty")
+	}
+	wanted := make(map[string]struct{}, len(c.Provisioners))
+	for _, name := range c.Provisioners {
+		if name == "" {
+			return errors.New("authority.adminLocalSigning provisioner name cannot be empty")
+		}
+		wanted[name] = struct{}{}
+	}
+	for _, p := range provisioners {
+		if _, ok := wanted[p.GetName()]; !ok {
+			continue
+		}
+		if p.GetType() != provisioner.TypeJWK {
+			return errors.Errorf("authority.adminLocalSigning provisioner %q must be JWK", p.GetName())
+		}
+		delete(wanted, p.GetName())
+	}
+	for name := range wanted {
+		return errors.Errorf("authority.adminLocalSigning provisioner %q not found", name)
+	}
+	return nil
+}
+
 type AuthConfig struct {
 	*cas.Options
 	AuthorityID          string                               `json:"authorityId,omitempty"`
@@ -191,6 +234,7 @@ type AuthConfig struct {
 	EnableAdmin          bool                                 `json:"enableAdmin,omitempty"`
 	DisableGetSSHHosts   bool                                 `json:"disableGetSSHHosts,omitempty"`
 	TrustedEABPolicy     *provisioner.TrustedACMEPolicyConfig `json:"trusted_eab_policy,omitempty"`
+	AdminLocalSigning    *AdminLocalSigningConfig             `json:"adminLocalSigning,omitempty"`
 }
 
 // init initializes the required fields in the AuthConfig if they are not
@@ -229,6 +273,9 @@ func (c *AuthConfig) Validate(provisioner.Audiences) error {
 		return errors.New("cannot have more than one kubernetes service account provisioner")
 	}
 	if err := c.TrustedEABPolicy.Validate(c.Provisioners, c.EnableAdmin); err != nil {
+		return err
+	}
+	if err := c.AdminLocalSigning.Validate(c.Provisioners, c.EnableAdmin); err != nil {
 		return err
 	}
 

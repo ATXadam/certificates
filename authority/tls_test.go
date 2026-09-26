@@ -2174,3 +2174,40 @@ func TestAuthority_GetX509Signer(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthority_x509CAServiceForProvisioner(t *testing.T) {
+	primary := notImplementedCAS{}
+	local := &softcas.SoftCAS{}
+	a := &Authority{
+		x509CAService:          primary,
+		adminX509CAService:     local,
+		adminLocalProvisioners: map[string]struct{}{"admin-jwk": {}},
+	}
+
+	tests := []struct {
+		name    string
+		prov    provisioner.Interface
+		want    apiv1.CertificateAuthorityService
+		wantErr bool
+	}{
+		{"nil uses primary", nil, primary, false},
+		{"acme uses primary", &provisioner.ACME{Name: "admin-jwk", Type: "ACME"}, primary, false},
+		{"unlisted jwk uses primary", &provisioner.JWK{Name: "other", Type: "JWK"}, primary, false},
+		{"listed jwk uses local", &provisioner.JWK{Name: "admin-jwk", Type: "JWK"}, local, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := a.x509CAServiceForProvisioner(tt.prov)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	a.adminX509CAService = nil
+	_, err := a.x509CAServiceForProvisioner(&provisioner.JWK{Name: "admin-jwk", Type: "JWK"})
+	require.Error(t, err)
+}

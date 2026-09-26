@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -398,6 +399,39 @@ func TestConfig_Audience(t *testing.T) {
 			}
 			if got := c.Audience(tt.args.path); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Config.Audience() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdminLocalSigningConfigValidate(t *testing.T) {
+	jwk := &provisioner.JWK{Name: "admin", Type: "JWK"}
+	acme := &provisioner.ACME{Name: "acme", Type: "ACME"}
+	tests := []struct {
+		name         string
+		config       *AdminLocalSigningConfig
+		provisioners provisioner.List
+		enableAdmin  bool
+		wantErr      string
+	}{
+		{"nil", nil, nil, false, ""},
+		{"admin disabled", &AdminLocalSigningConfig{Provisioners: []string{"admin"}, CertFile: "crt", KeyFile: "key"}, provisioner.List{jwk}, false, "requires enableAdmin"},
+		{"empty provisioners", &AdminLocalSigningConfig{CertFile: "crt", KeyFile: "key"}, provisioner.List{jwk}, true, "provisioners cannot be empty"},
+		{"missing key", &AdminLocalSigningConfig{Provisioners: []string{"admin"}, CertFile: "crt"}, provisioner.List{jwk}, true, "crt and key cannot be empty"},
+		{"missing provisioner", &AdminLocalSigningConfig{Provisioners: []string{"missing"}, CertFile: "crt", KeyFile: "key"}, provisioner.List{jwk}, true, `provisioner "missing" not found`},
+		{"non jwk", &AdminLocalSigningConfig{Provisioners: []string{"acme"}, CertFile: "crt", KeyFile: "key"}, provisioner.List{acme}, true, `provisioner "acme" must be JWK`},
+		{"ok", &AdminLocalSigningConfig{Provisioners: []string{"admin"}, CertFile: "crt", KeyFile: "key"}, provisioner.List{jwk, acme}, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate(tt.provisioners, tt.enableAdmin)
+			if tt.wantErr == "" {
+				assert.Nil(t, err)
+				return
+			}
+			if assert.NotNil(t, err) {
+				assert.HasPrefix(t, err.Error(), "authority.adminLocalSigning")
+				assert.True(t, strings.Contains(err.Error(), tt.wantErr))
 			}
 		})
 	}
