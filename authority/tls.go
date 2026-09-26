@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -332,15 +333,20 @@ func (a *Authority) signX509(ctx context.Context, csr *x509.CertificateRequest, 
 }
 
 func (a *Authority) x509CAServiceForProvisioner(prov provisioner.Interface) (casapi.CertificateAuthorityService, error) {
-	if prov == nil || prov.GetType() != provisioner.TypeJWK {
+	if prov == nil {
+		log.Printf("x509 CAS routing: provisioner_type=<nil> provisioner_name=<nil> local_admin_configured=false selected_cas=primary")
 		return a.x509CAService, nil
 	}
-	if _, ok := a.adminLocalProvisioners[prov.GetName()]; !ok {
+	_, configured := a.adminLocalProvisioners[prov.GetName()]
+	if prov.GetType() != provisioner.TypeJWK || !configured {
+		log.Printf("x509 CAS routing: provisioner_type=%s provisioner_name=%q local_admin_configured=%t selected_cas=primary", prov.GetType(), prov.GetName(), configured)
 		return a.x509CAService, nil
 	}
 	if a.adminX509CAService == nil {
+		log.Printf("x509 CAS routing: provisioner_type=%s provisioner_name=%q local_admin_configured=true selected_cas=unavailable", prov.GetType(), prov.GetName())
 		return nil, errs.InternalServer("authority.Sign; local admin signing service is not initialized")
 	}
+	log.Printf("x509 CAS routing: provisioner_type=%s provisioner_name=%q local_admin_configured=true selected_cas=local", prov.GetType(), prov.GetName())
 	return a.adminX509CAService, nil
 }
 
