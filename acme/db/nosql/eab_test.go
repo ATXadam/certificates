@@ -1375,6 +1375,21 @@ func TestDB_addEAKID(t *testing.T) {
 				err: nil,
 			}
 		},
+		"ok/existing-empty-index": func(t *testing.T) test {
+			return test{
+				ctx: context.Background(), provisionerID: provID, eakID: eakID,
+				db: &certdb.MockNoSQLDB{
+					MGet: func(bucket, key []byte) ([]byte, error) { b, _ := json.Marshal([]string{}); return b, nil },
+					MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
+						oldB, _ := json.Marshal([]string{})
+						assert.Equals(t, old, oldB)
+						newB, _ := json.Marshal([]string{eakID})
+						assert.Equals(t, nu, newB)
+						return newB, true, nil
+					},
+				},
+			}
+		},
 		"ok": func(t *testing.T) test {
 			return test{
 				ctx:           context.Background(),
@@ -1607,7 +1622,8 @@ func TestDB_addAndDeleteEAKID(t *testing.T) {
 							newB, _ := json.Marshal([]string{})
 							return newB, true, nil
 						case 2:
-							assert.Equals(t, old, nil)
+							oldB, _ := json.Marshal([]string{})
+							assert.Equals(t, old, oldB)
 							newB, _ := json.Marshal([]string{"eakID1"})
 							assert.Equals(t, nu, newB)
 							return newB, true, nil

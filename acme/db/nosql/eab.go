@@ -322,12 +322,14 @@ func (db *DB) addEAKID(ctx context.Context, provisionerID, eakID string) error {
 	}
 
 	var eakIDs []string
+	indexExists := true
 	b, err := db.db.Get(externalAccountKeyIDsByProvisionerIDTable, []byte(provisionerID))
 	if err != nil {
 		if !nosqlDB.IsErrNotFound(err) {
 			return errors.Wrapf(err, "error loading eakIDs for provisioner %s", provisionerID)
 		}
 		// it may happen that no record is found; we'll continue with an empty slice
+		indexExists = false
 	} else {
 		if err := json.Unmarshal(b, &eakIDs); err != nil {
 			return errors.Wrapf(err, "error unmarshaling eakIDs for provisioner %s", provisionerID)
@@ -350,10 +352,10 @@ func (db *DB) addEAKID(ctx context.Context, provisionerID, eakID string) error {
 		_new interface{} = newEAKIDs
 	)
 
-	// ensure that the DB gets the expected value when the slice is empty; otherwise
-	// it'll return with an error that indicates that the DBs view of the data is
-	// different from the last read (i.e. _old is different from what the DB has).
-	if len(eakIDs) == 0 {
+	// A missing index must compare against nil. An existing serialized empty
+	// index must compare against [] instead; using slice length cannot distinguish
+	// those states and causes a false CAS conflict after deleting the last EAB.
+	if !indexExists {
 		_old = nil
 	}
 
@@ -369,12 +371,14 @@ func (db *DB) deleteEAKID(ctx context.Context, provisionerID, eakID string) erro
 	defer referencesByProvisionerIndexMutex.Unlock()
 
 	var eakIDs []string
+	indexExists := true
 	b, err := db.db.Get(externalAccountKeyIDsByProvisionerIDTable, []byte(provisionerID))
 	if err != nil {
 		if !nosqlDB.IsErrNotFound(err) {
 			return errors.Wrapf(err, "error loading eakIDs for provisioner %s", provisionerID)
 		}
 		// it may happen that no record is found; we'll continue with an empty slice
+		indexExists = false
 	} else {
 		if err := json.Unmarshal(b, &eakIDs); err != nil {
 			return errors.Wrapf(err, "error unmarshaling eakIDs for provisioner %s", provisionerID)
@@ -387,10 +391,7 @@ func (db *DB) deleteEAKID(ctx context.Context, provisionerID, eakID string) erro
 		_new interface{} = newEAKIDs
 	)
 
-	// ensure that the DB gets the expected value when the slice is empty; otherwise
-	// it'll return with an error that indicates that the DBs view of the data is
-	// different from the last read (i.e. _old is different from what the DB has).
-	if len(eakIDs) == 0 {
+	if !indexExists {
 		_old = nil
 	}
 
