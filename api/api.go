@@ -327,6 +327,7 @@ func New(Authority) RouterHandler {
 func Route(r Router) {
 	r.MethodFunc("GET", "/version", Version)
 	r.MethodFunc("GET", "/health", Health)
+	r.MethodFunc("GET", "/healthz", Health)
 	r.MethodFunc("GET", "/root/{sha}", Root)
 	r.MethodFunc("POST", "/sign", Sign)
 	r.MethodFunc("POST", "/renew", Renew)

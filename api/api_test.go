@@ -1758,3 +1758,24 @@ func TestIntermediatesPEM(t *testing.T) {
 		})
 	}
 }
+
+func TestRoute_Healthz(t *testing.T) {
+	r := chi.NewRouter()
+	Route(r)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/healthz", http.NoBody)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	res := w.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz status = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []byte("{\"status\":\"ok\"}\n")
+	if !bytes.Equal(body, expected) {
+		t.Fatalf("GET /healthz body = %q, want %q", body, expected)
+	}
+}
