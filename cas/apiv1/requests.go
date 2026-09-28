@@ -58,11 +58,13 @@ type CreateCertificateRequest struct {
 	Lifetime       time.Duration
 	Backdate       time.Duration
 	RequestID      string
+	AccountID      string
 	Provisioner    *ProvisionerInfo
 	IsCAServerCert bool
 }
 
 type orderIDContextKey struct{}
+type accountIDContextKey struct{}
 
 // NewOrderIDContext associates a durable ACME order identity with a signing
 // request. External certificate authorities can use it to reconcile an
@@ -75,6 +77,19 @@ func NewOrderIDContext(ctx context.Context, orderID string) context.Context {
 func OrderIDFromContext(ctx context.Context) string {
 	orderID, _ := ctx.Value(orderIDContextKey{}).(string)
 	return orderID
+}
+
+// NewAccountIDContext associates the downstream ACME account identity with a
+// signing request. External certificate authorities can use it for per-account
+// controls without deriving identity from identifiers or network metadata.
+func NewAccountIDContext(ctx context.Context, accountID string) context.Context {
+	return context.WithValue(ctx, accountIDContextKey{}, accountID)
+}
+
+// AccountIDFromContext returns the downstream ACME account identity, when present.
+func AccountIDFromContext(ctx context.Context) string {
+	accountID, _ := ctx.Value(accountIDContextKey{}).(string)
+	return accountID
 }
 
 // ProvisionerInfo contains information of the provisioner used to authorize a
