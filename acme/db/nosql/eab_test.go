@@ -747,7 +747,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -797,7 +797,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -847,7 +847,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -975,7 +975,7 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 					MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							assert.Equals(t, old, nil)
 							return nu, true, nil
 						case string(externalAccountKeyTable):
@@ -1001,7 +1001,7 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 					MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							assert.Equals(t, old, nil)
 							return nu, true, nil
 						case string(externalAccountKeyTable):
@@ -1065,6 +1065,100 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 				assert.False(t, eak.AlreadyBound())
 				assert.True(t, eak.BoundAt.IsZero())
 			}
+		})
+	}
+}
+
+func TestDB_DeleteExternalAccountKeyReferenceSafety(t *testing.T) {
+	keyID := "keyID"
+	provID := "provID"
+	ref := "ref"
+	now := clock.Now()
+	dbeak := &dbExternalAccountKey{
+		ID:            keyID,
+		ProvisionerID: provID,
+		Reference:     ref,
+		HmacKey:       []byte{1, 3, 3, 7},
+		CreatedAt:     now,
+	}
+	eakBytes, err := json.Marshal(dbeak)
+	assert.FatalError(t, err)
+
+	tests := map[string]struct {
+		referenceKeyID       string
+		referenceIndexExists bool
+		wantReferenceDelete  bool
+	}{
+		"missing-reference-index": {
+			referenceIndexExists: false,
+			wantReferenceDelete:  false,
+		},
+		"reference-points-to-other-key": {
+			referenceKeyID:       "other-key",
+			referenceIndexExists: true,
+			wantReferenceDelete:  false,
+		},
+		"reference-points-to-deleted-key": {
+			referenceKeyID:       keyID,
+			referenceIndexExists: true,
+			wantReferenceDelete:  true,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			referenceDeleted := false
+			eakDeleted := false
+			mock := &certdb.MockNoSQLDB{
+				MGet: func(bucket, key []byte) ([]byte, error) {
+					switch string(bucket) {
+					case string(externalAccountKeyTable):
+						assert.Equals(t, string(key), keyID)
+						return eakBytes, nil
+					case string(externalAccountKeyIDsByReferenceTable):
+						assert.Equals(t, string(key), provID+"."+ref)
+						if !tc.referenceIndexExists {
+							return nil, nosqldb.ErrNotFound
+						}
+						value, err := json.Marshal(&dbExternalAccountKeyReference{
+							Reference:            ref,
+							ExternalAccountKeyID: tc.referenceKeyID,
+						})
+						assert.FatalError(t, err)
+						return value, nil
+					case string(externalAccountKeyIDsByProvisionerIDTable):
+						value, err := json.Marshal([]string{keyID})
+						assert.FatalError(t, err)
+						return value, nil
+					default:
+						return nil, errors.Errorf("unexpected bucket %s", string(bucket))
+					}
+				},
+				MDel: func(bucket, key []byte) error {
+					switch string(bucket) {
+					case string(externalAccountKeyIDsByReferenceTable):
+						referenceDeleted = true
+						assert.Equals(t, string(key), provID+"."+ref)
+						return nil
+					case string(externalAccountKeyTable):
+						eakDeleted = true
+						assert.Equals(t, string(key), keyID)
+						return nil
+					default:
+						return errors.Errorf("unexpected bucket %s", string(bucket))
+					}
+				},
+				MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
+					assert.Equals(t, string(bucket), string(externalAccountKeyIDsByProvisionerIDTable))
+					assert.Equals(t, string(key), provID)
+					return nil, true, nil
+				},
+			}
+
+			d := DB{db: mock}
+			assert.FatalError(t, d.DeleteExternalAccountKey(context.Background(), provID, keyID))
+			assert.Equals(t, eakDeleted, true)
+			assert.Equals(t, referenceDeleted, tc.wantReferenceDelete)
 		})
 	}
 }
