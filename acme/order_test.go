@@ -365,11 +365,13 @@ func (m *mockSignAuth) GetBackdate() *time.Duration {
 }
 
 type testHTTPStatusError struct {
-	status int
+	status     int
+	retryAfter int64
 }
 
-func (e testHTTPStatusError) Error() string   { return "rate limited" }
-func (e testHTTPStatusError) HTTPStatus() int { return e.status }
+func (e testHTTPStatusError) Error() string            { return "rate limited" }
+func (e testHTTPStatusError) HTTPStatus() int          { return e.status }
+func (e testHTTPStatusError) RetryAfterSeconds() int64 { return e.retryAfter }
 
 func TestOrder_Finalize(t *testing.T) {
 	mustSigner := func(kty, crv string, size int) crypto.Signer {
@@ -623,12 +625,12 @@ func TestOrder_Finalize(t *testing.T) {
 					MgetOptions:    func() *provisioner.Options { return nil },
 				},
 				ca: &mockSignAuth{signWithContext: func(context.Context, *x509.CertificateRequest, provisioner.SignOptions, ...provisioner.SignOption) ([]*x509.Certificate, error) {
-					return nil, testHTTPStatusError{status: 429}
+					return nil, testHTTPStatusError{status: 429, retryAfter: 37}
 				}},
 				db: &MockDB{MockGetAuthorization: func(context.Context, string) (*Authorization, error) {
 					return &Authorization{ID: "a", Status: StatusValid}, nil
 				}},
-				err: NewError(ErrorRateLimitedType, "certificate issuance rate limited"),
+				err: NewError(ErrorRateLimitedType, "certificate issuance rate limited; retry after 37 seconds"),
 			}
 		},
 		"fail/error-ca-sign": func(t *testing.T) test {

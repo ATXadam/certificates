@@ -22,6 +22,13 @@ type HTTPStatusError interface {
 	HTTPStatus() int
 }
 
+// RetryAfterError optionally exposes a safe retry interval for external CA
+// errors. It is intentionally expressed as seconds for wire-safe propagation.
+type RetryAfterError interface {
+	error
+	RetryAfterSeconds() int64
+}
+
 // ACMEOrderFinalizationObserver is an optional hook invoked after the local
 // ACME order's terminal state has been persisted. External services can use it
 // to remove recovery metadata without creating a crash window before commit.

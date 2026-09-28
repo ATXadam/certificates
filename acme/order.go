@@ -337,6 +337,10 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 
 		var statusErr apiv1.HTTPStatusError
 		if errors.As(err, &statusErr) && statusErr.HTTPStatus() == 429 {
+			var retryErr apiv1.RetryAfterError
+			if errors.As(err, &retryErr) && retryErr.RetryAfterSeconds() > 0 {
+				return NewError(ErrorRateLimitedType, "certificate issuance rate limited; retry after %d seconds", retryErr.RetryAfterSeconds())
+			}
 			return NewError(ErrorRateLimitedType, "certificate issuance rate limited")
 		}
 		return WrapErrorISE(err, "error signing certificate for order %s", o.ID)

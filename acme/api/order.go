@@ -733,7 +733,7 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 		if err := validateCurrentOrderPolicy(bgCtx, bgOrder, db, ca, prov); err != nil {
 			slog.Error("async finalization rejected by current policy", "order", orderID, "err", err)
 			logSecurityEvent(bgCtx, "finalization_failed",
-				"local_order_id", orderID, "account_id", bgOrder.AccountID,
+				"local_order_id", orderID,
 				"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
 				"identifiers", bgOrder.Identifiers, "result", "failure", "reason", "current_policy_rejected",
 			)
@@ -751,13 +751,13 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 		if err := bgOrder.Finalize(bgCtx, db, csr, ca, prov); err != nil {
 			slog.Error("async finalization failed", "order", orderID, "err", err)
 			logSecurityEvent(bgCtx, "finalization_failed",
-				"local_order_id", orderID, "account_id", bgOrder.AccountID,
+				"local_order_id", orderID,
 				"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
 				"identifiers", bgOrder.Identifiers, "result", "failure", "reason", "issuer_finalization_failed",
 			)
 			bgOrder.Status = acme.StatusInvalid
 			var acmeErr *acme.Error
-			if errors.As(err, &acmeErr) && acmeErr.Type == acme.ErrorRateLimitedType.String() {
+			if errors.As(err, &acmeErr) && acmeErr.Type == "urn:ietf:params:acme:error:"+acme.ErrorRateLimitedType.String() {
 				bgOrder.Error = acmeErr
 			} else {
 				bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
