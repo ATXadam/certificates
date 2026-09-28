@@ -276,13 +276,17 @@ func jwsFinal(_ crypto.Hash, sig []byte, phead, payload string) ([]byte, error) 
 }
 
 type mockCA struct {
+	MockSign           func(context.Context, *x509.CertificateRequest, provisioner.SignOptions, ...provisioner.SignOption) ([]*x509.Certificate, error)
 	MockIsRevoked      func(sn string) (bool, error)
 	MockRevoke         func(ctx context.Context, opts *authority.RevokeOptions) error
 	MockAreSANsallowed func(ctx context.Context, sans []string) error
 	MockGetBackdate    func() *time.Duration
 }
 
-func (m *mockCA) SignWithContext(context.Context, *x509.CertificateRequest, provisioner.SignOptions, ...provisioner.SignOption) ([]*x509.Certificate, error) {
+func (m *mockCA) SignWithContext(ctx context.Context, csr *x509.CertificateRequest, opts provisioner.SignOptions, signOpts ...provisioner.SignOption) ([]*x509.Certificate, error) {
+	if m.MockSign != nil {
+		return m.MockSign(ctx, csr, opts, signOpts...)
+	}
 	return nil, nil
 }
 

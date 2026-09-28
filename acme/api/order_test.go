@@ -2819,3 +2819,66 @@ func TestTrimIfWildcard(t *testing.T) {
 		})
 	}
 }
+
+type asyncRateLimitError struct{}
+
+func (asyncRateLimitError) Error() string            { return "rate limited" }
+func (asyncRateLimitError) HTTPStatus() int          { return http.StatusTooManyRequests }
+func (asyncRateLimitError) RetryAfterSeconds() int64 { return 37 }
+
+func TestStartAsyncFinalizationPersistsRateLimitedProblem(t *testing.T) {
+	prov := newProv()
+	_csr, err := pemutil.Read("../../authority/testdata/certs/foo.csr")
+	assert.FatalError(t, err)
+	csr, ok := _csr.(*x509.CertificateRequest)
+	assert.Fatal(t, ok)
+
+	orderID := "rate-limited-async-order"
+	asyncFinalizations.Delete(orderID)
+	t.Cleanup(func() { asyncFinalizations.Delete(orderID) })
+
+	updated := make(chan *acme.Order, 1)
+	db := &acme.MockDB{
+		MockGetOrder: func(context.Context, string) (*acme.Order, error) {
+			return &acme.Order{
+				ID:               orderID,
+				AccountID:        "accountID",
+				ProvisionerID:    fmt.Sprintf("acme/%s", prov.GetName()),
+				Status:           acme.StatusProcessing,
+				ExpiresAt:        clock.Now().Add(time.Hour),
+				AuthorizationIDs: []string{"authzID"},
+				Identifiers:      []acme.Identifier{{Type: "dns", Value: "example.acme.com"}},
+			}, nil
+		},
+		MockGetAuthorization: func(context.Context, string) (*acme.Authorization, error) {
+			return &acme.Authorization{
+				ID: "authzID", AccountID: "accountID",
+				Status:     acme.StatusValid,
+				Identifier: acme.Identifier{Type: "dns", Value: "example.acme.com"},
+			}, nil
+		},
+		MockUpdateOrder: func(_ context.Context, o *acme.Order) error {
+			if o.Status == acme.StatusInvalid {
+				updated <- o
+			}
+			return nil
+		},
+	}
+	ca := &mockCA{MockSign: func(context.Context, *x509.CertificateRequest, provisioner.SignOptions, ...provisioner.SignOption) ([]*x509.Certificate, error) {
+		return nil, asyncRateLimitError{}
+	}}
+	ctx := acme.NewProvisionerContext(context.Background(), prov)
+	startAsyncFinalization(ctx, db, orderID, csr, ca, prov)
+
+	select {
+	case got := <-updated:
+		assert.Equals(t, got.Status, acme.StatusInvalid)
+		if got.Error == nil {
+			t.Fatal("persisted order error is nil")
+		}
+		assert.Equals(t, got.Error.Type, "urn:ietf:params:acme:error:rateLimited")
+		assert.HasPrefix(t, got.Error.Detail, "The request exceeds a rate limit: certificate issuance rate limited; retry after 37 seconds")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async rate-limit persistence")
+	}
+}
