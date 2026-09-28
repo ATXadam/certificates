@@ -1163,6 +1163,68 @@ func TestDB_DeleteExternalAccountKeyReferenceSafety(t *testing.T) {
 	}
 }
 
+func TestDB_DeleteExternalAccountKeyReferenceSafetyFailClosed(t *testing.T) {
+	const keyID, provID, ref = "keyID", "provID", "ref"
+	eakBytes, err := json.Marshal(&dbExternalAccountKey{
+		ID: keyID, ProvisionerID: provID, Reference: ref, CreatedAt: clock.Now(),
+	})
+	assert.FatalError(t, err)
+
+	tests := []struct {
+		name             string
+		referencePayload []byte
+		referenceErr     error
+		wantErr          string
+	}{
+		{
+			name:             "invalid-reference-index-payload",
+			referencePayload: []byte("{"),
+			wantErr:          "error unmarshaling ACME EAB Key reference with Key ID keyID and reference ref",
+		},
+		{
+			name:         "reference-index-read-failure",
+			referenceErr: errors.New("force read failure"),
+			wantErr:      "error loading ACME EAB Key reference with Key ID keyID and reference ref: force read failure",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deletes := 0
+			cas := 0
+			mock := &certdb.MockNoSQLDB{
+				MGet: func(bucket, key []byte) ([]byte, error) {
+					switch string(bucket) {
+					case string(externalAccountKeyTable):
+						return eakBytes, nil
+					case string(externalAccountKeyIDsByReferenceTable):
+						assert.Equals(t, string(key), referenceKey(provID, ref))
+						return tt.referencePayload, tt.referenceErr
+					default:
+						return nil, errors.Errorf("unexpected bucket %s", string(bucket))
+					}
+				},
+				MDel: func(bucket, key []byte) error {
+					deletes++
+					return nil
+				},
+				MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
+					cas++
+					return nu, true, nil
+				},
+			}
+
+			d := DB{db: mock}
+			err := d.DeleteExternalAccountKey(context.Background(), provID, keyID)
+			if assert.NotNil(t, err) {
+				assert.HasPrefix(t, err.Error(), tt.wantErr)
+			}
+			assert.Equals(t, deletes, 0)
+			assert.Equals(t, cas, 0)
+		})
+	}
+}
+
 func TestDB_UpdateExternalAccountKey(t *testing.T) {
 	keyID := "keyID"
 	provID := "provID"
