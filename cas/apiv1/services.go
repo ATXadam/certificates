@@ -15,6 +15,13 @@ type CertificateAuthorityService interface {
 	RevokeCertificate(req *RevokeCertificateRequest) (*RevokeCertificateResponse, error)
 }
 
+// HTTPStatusError is an optional error contract for external CA services that
+// need to return a specific safe HTTP status through the authority boundary.
+type HTTPStatusError interface {
+	error
+	HTTPStatus() int
+}
+
 // ACMEOrderFinalizationObserver is an optional hook invoked after the local
 // ACME order's terminal state has been persisted. External services can use it
 // to remove recovery metadata without creating a crash window before commit.

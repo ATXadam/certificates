@@ -314,6 +314,10 @@ func (a *Authority) signX509(ctx context.Context, csr *x509.CertificateRequest, 
 		AccountID:   casapi.AccountIDFromContext(ctx),
 	})
 	if err != nil {
+		var statusErr casapi.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, prov, errs.Wrap(statusErr.HTTPStatus(), err, "authority.Sign; external CA rejected certificate request", opts...)
+		}
 		return nil, prov, errs.Wrap(http.StatusInternalServerError, err, "authority.Sign; error creating certificate", opts...)
 	}
 
