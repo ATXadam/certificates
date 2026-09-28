@@ -630,7 +630,7 @@ func TestOrder_Finalize(t *testing.T) {
 				db: &MockDB{MockGetAuthorization: func(context.Context, string) (*Authorization, error) {
 					return &Authorization{ID: "a", Status: StatusValid}, nil
 				}},
-				err: NewError(ErrorRateLimitedType, "certificate issuance rate limited; retry after 37 seconds"),
+				err: NewDetailedError(ErrorRateLimitedType, "certificate issuance rate limited; retry after 37 seconds"),
 			}
 		},
 		"fail/error-ca-sign": func(t *testing.T) test {

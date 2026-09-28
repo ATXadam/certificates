@@ -339,7 +339,7 @@ func (o *Order) Finalize(ctx context.Context, db DB, csr *x509.CertificateReques
 		if errors.As(err, &statusErr) && statusErr.HTTPStatus() == 429 {
 			var retryErr apiv1.RetryAfterError
 			if errors.As(err, &retryErr) && retryErr.RetryAfterSeconds() > 0 {
-				return NewError(ErrorRateLimitedType, "certificate issuance rate limited; retry after %d seconds", retryErr.RetryAfterSeconds())
+				return NewDetailedError(ErrorRateLimitedType, "certificate issuance rate limited; retry after %d seconds", retryErr.RetryAfterSeconds())
 			}
 			return NewError(ErrorRateLimitedType, "certificate issuance rate limited")
 		}
