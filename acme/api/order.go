@@ -230,7 +230,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	if trustedPolicy && !acmeProv.RequireEAB && !trustedWithoutEAB {
 		logSecurityEvent(ctx, "trusted_authorization_decision",
-			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 			"identifiers", nor.Identifiers, "result", "denied", "reason", "require_eab_disabled",
 		)
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted authorization without EAB is not enabled for this provisioner"))
@@ -238,7 +238,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	if trustedPolicy && acmeProv.RequireEAB && !hasNonEmptyACMEPolicy(eak) {
 		logSecurityEvent(ctx, "trusted_authorization_decision",
-			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 			"identifiers", nor.Identifiers, "result", "denied", "reason", "missing_positive_account_policy",
 		)
 		render.Error(w, r, acme.NewError(acme.ErrorUnauthorizedType, "trusted EAB-policy authorization requires a bound EAB with a non-empty policy"))
@@ -253,7 +253,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	for _, identifier := range nor.Identifiers {
 		if trustedPolicy && identifier.Type != acme.DNS {
 			logSecurityEvent(ctx, "trusted_authorization_decision",
-				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 				"identifiers", nor.Identifiers, "result", "denied", "reason", "unsupported_identifier_type",
 			)
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted EAB-policy authorization does not support identifier type %s", identifier.Type))
@@ -261,7 +261,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		}
 		if trustedWithoutEAB && !trustedResolver.IsDNSAllowedWithoutEAB(acmeProv.GetName(), identifier.Value) {
 			logSecurityEvent(ctx, "trusted_authorization_decision",
-				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 				"identifiers", nor.Identifiers, "result", "denied", "reason", "non_eab_dns_policy",
 			)
 			render.Error(w, r, acme.NewError(acme.ErrorRejectedIdentifierType, "trusted non-EAB authorization does not allow DNS name %s", identifier.Value))
@@ -272,12 +272,12 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		if acmeProv.RequireEAB {
 			if err = isIdentifierAllowed(acmePolicy, identifier); err != nil {
 				logSecurityEvent(ctx, "acme_policy_rejection",
-					"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+					"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 					"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
 				)
 				if trustedPolicy {
 					logSecurityEvent(ctx, "trusted_authorization_decision",
-						"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+						"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 						"identifiers", nor.Identifiers, "result", "denied", "reason", "account_policy",
 					)
 				}
@@ -289,12 +289,12 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		orderIdentifier := provisioner.ACMEIdentifier{Type: provisioner.ACMEIdentifierType(identifier.Type), Value: identifier.Value}
 		if err = prov.AuthorizeOrderIdentifier(ctx, orderIdentifier); err != nil {
 			logSecurityEvent(ctx, "acme_policy_rejection",
-				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 				"identifiers", nor.Identifiers, "result", "denied", "reason", "provisioner_policy",
 			)
 			if trustedPolicy {
 				logSecurityEvent(ctx, "trusted_authorization_decision",
-					"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+					"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 					"identifiers", nor.Identifiers, "result", "denied", "reason", "provisioner_policy",
 				)
 			}
@@ -307,12 +307,12 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	// treating each identifier as an independent request.
 	if err = ca.AreSANsAllowed(ctx, identifierValues(nor.Identifiers)); err != nil {
 		logSecurityEvent(ctx, "acme_policy_rejection",
-			"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+			"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 			"identifiers", nor.Identifiers, "result", "denied", "reason", "authority_policy",
 		)
 		if trustedPolicy {
 			logSecurityEvent(ctx, "trusted_authorization_decision",
-				"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+				"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 				"identifiers", nor.Identifiers, "result", "denied", "reason", "authority_policy",
 			)
 		}
@@ -324,7 +324,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 		trustedResult, trustedReason = "allowed", "all_account_provisioner_authority_policies_passed"
 	}
 	logSecurityEvent(ctx, "trusted_authorization_decision",
-		"account_id", acc.ID, "provisioner_id", acmeProv.GetIDForToken(),
+		"account_ref", accountRef(acc.ID), "provisioner_id", acmeProv.GetIDForToken(),
 		"identifiers", nor.Identifiers, "result", trustedResult, "reason", trustedReason,
 	)
 
@@ -379,7 +379,7 @@ func NewOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	logSecurityEvent(ctx, "downstream_order_created",
 		"local_order_id", o.ID,
-		"account_id", acc.ID,
+		"account_ref", accountRef(acc.ID),
 		"provisioner_id", acmeProv.GetIDForToken(),
 		"identifiers", o.Identifiers,
 		"result", "success",
@@ -772,7 +772,7 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 			return
 		}
 		logSecurityEvent(bgCtx, "finalization_succeeded",
-			"local_order_id", orderID, "account_id", bgOrder.AccountID,
+			"local_order_id", orderID, "account_ref", accountRef(bgOrder.AccountID),
 			"provisioner_id", prov.GetIDForToken(), "csr_sha256", csrSHA256(csr.Raw),
 			"identifiers", bgOrder.Identifiers, "result", "success",
 		)
@@ -806,7 +806,7 @@ func notifyOrderFinalized(ca acme.CertificateAuthority, requestID string) {
 func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, ca acme.CertificateAuthority, prov acme.Provisioner) error {
 	reject := func(reason string, err error) error {
 		fields := []any{
-			"local_order_id", o.ID, "account_id", o.AccountID,
+			"local_order_id", o.ID, "account_ref", accountRef(o.AccountID),
 			"provisioner_id", prov.GetIDForToken(), "identifiers", o.Identifiers,
 			"result", "denied", "reason", reason,
 		}
@@ -870,7 +870,7 @@ func validateCurrentOrderPolicy(ctx context.Context, o *acme.Order, db acme.DB, 
 		}
 	}
 	fields := []any{
-		"local_order_id", o.ID, "account_id", o.AccountID,
+		"local_order_id", o.ID, "account_ref", accountRef(o.AccountID),
 		"provisioner_id", prov.GetIDForToken(), "identifiers", o.Identifiers,
 		"result", "allowed", "reason", "current_policy_recheck_passed",
 	}

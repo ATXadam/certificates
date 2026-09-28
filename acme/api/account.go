@@ -147,7 +147,7 @@ func NewAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logSecurityEvent(ctx, "downstream_account_created",
-			"account_id", acc.ID,
+			"account_ref", accountRef(acc.ID),
 			"provisioner_id", prov.GetIDForToken(),
 			"result", "success",
 		)
@@ -155,7 +155,7 @@ func NewAccount(w http.ResponseWriter, r *http.Request) {
 		if eak != nil { // means that we have a (valid) External Account Binding key that should be bound, updated and sent in the response
 			if err := eak.BindTo(acc); err != nil {
 				logSecurityEvent(ctx, "downstream_eab_binding_failed",
-					"account_id", acc.ID, "provisioner_id", prov.GetIDForToken(),
+					"account_ref", accountRef(acc.ID), "provisioner_id", prov.GetIDForToken(),
 					"eab_key_id", eak.ID, "result", "failure", "reason", "binding_state_transition_failed",
 				)
 				render.Error(w, r, err)
@@ -163,14 +163,14 @@ func NewAccount(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := db.UpdateExternalAccountKey(ctx, prov.GetIDForToken(), eak); err != nil {
 				logSecurityEvent(ctx, "downstream_eab_binding_failed",
-					"account_id", acc.ID, "provisioner_id", prov.GetIDForToken(),
+					"account_ref", accountRef(acc.ID), "provisioner_id", prov.GetIDForToken(),
 					"eab_key_id", eak.ID, "result", "failure", "reason", "binding_persistence_failed",
 				)
 				render.Error(w, r, acme.WrapErrorISE(err, "error updating external account binding key"))
 				return
 			}
 			logSecurityEvent(ctx, "downstream_eab_bound",
-				"account_id", acc.ID,
+				"account_ref", accountRef(acc.ID),
 				"provisioner_id", prov.GetIDForToken(),
 				"eab_key_id", eak.ID,
 				"result", "success",

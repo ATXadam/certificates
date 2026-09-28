@@ -22,3 +22,11 @@ func csrSHA256(raw []byte) string {
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
 }
+
+func accountRef(accountID string) string {
+	if accountID == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(accountID))
+	return hex.EncodeToString(digest[:])
+}
