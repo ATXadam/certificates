@@ -747,7 +747,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -797,7 +797,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -847,7 +847,7 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 					MGet: func(bucket, key []byte) ([]byte, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							return dbrefBytes, nil
 						case string(externalAccountKeyTable):
 							assert.Equals(t, string(key), keyID)
@@ -899,6 +899,105 @@ func TestDB_DeleteExternalAccountKey(t *testing.T) {
 			} else {
 				assert.Nil(t, tc.err)
 			}
+		})
+	}
+}
+
+func TestDB_DeleteExternalAccountKeyReferenceSafety(t *testing.T) {
+	const (
+		keyID   = "keyID-A"
+		otherID = "keyID-B"
+		provID  = "provID"
+		ref     = "envoy"
+	)
+
+	dbeakBytes, err := json.Marshal(&dbExternalAccountKey{
+		ID: keyID, ProvisionerID: provID, Reference: ref, CreatedAt: clock.Now(),
+	})
+	assert.FatalError(t, err)
+	indexBytes, err := json.Marshal([]string{keyID, otherID})
+	assert.FatalError(t, err)
+
+	tests := []struct {
+		name               string
+		referenceID        string
+		referenceErr       error
+		referencePayload   []byte
+		wantErr            string
+		wantReferenceDel   int
+		wantKeyDel         int
+		wantProvisionerCAS int
+	}{
+		{name: "unique-reference", referenceID: keyID, wantReferenceDel: 1, wantKeyDel: 1, wantProvisionerCAS: 1},
+		{name: "missing-reference-index", referenceErr: nosqldb.ErrNotFound, wantKeyDel: 1, wantProvisionerCAS: 1},
+		{name: "reference-points-to-another-kid", referenceID: otherID, wantKeyDel: 1, wantProvisionerCAS: 1},
+		{name: "invalid-reference-index-payload", referencePayload: []byte("{"), wantErr: "error unmarshaling ACME EAB Key reference with Key ID keyID-A and reference envoy"},
+		{name: "reference-index-read-failure", referenceErr: errors.New("force read failure"), wantErr: "error loading ACME EAB Key reference with Key ID keyID-A and reference envoy: force read failure"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var referenceDeletes, keyDeletes, provisionerCAS int
+			var referencePayload []byte
+			if tt.referencePayload != nil {
+				referencePayload = tt.referencePayload
+			} else if tt.referenceErr == nil {
+				referencePayload, err = json.Marshal(&dbExternalAccountKeyReference{Reference: ref, ExternalAccountKeyID: tt.referenceID})
+				assert.FatalError(t, err)
+			}
+
+			mock := &certdb.MockNoSQLDB{
+				MGet: func(bucket, key []byte) ([]byte, error) {
+					switch {
+					case string(bucket) == string(externalAccountKeyTable):
+						assert.Equals(t, string(key), keyID)
+						return dbeakBytes, nil
+					case string(bucket) == string(externalAccountKeyIDsByReferenceTable):
+						assert.Equals(t, string(key), referenceKey(provID, ref))
+						return referencePayload, tt.referenceErr
+					case string(bucket) == string(externalAccountKeyIDsByProvisionerIDTable):
+						assert.Equals(t, string(key), provID)
+						return indexBytes, nil
+					default:
+						return nil, errors.Errorf("unexpected bucket %s", bucket)
+					}
+				},
+				MDel: func(bucket, key []byte) error {
+					switch {
+					case string(bucket) == string(externalAccountKeyIDsByReferenceTable):
+						referenceDeletes++
+						assert.Equals(t, string(key), referenceKey(provID, ref))
+					case string(bucket) == string(externalAccountKeyTable):
+						keyDeletes++
+						assert.Equals(t, string(key), keyID)
+					default:
+						return errors.Errorf("unexpected delete bucket %s", bucket)
+					}
+					return nil
+				},
+				MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
+					assert.Equals(t, string(bucket), string(externalAccountKeyIDsByProvisionerIDTable))
+					assert.Equals(t, string(key), provID)
+					provisionerCAS++
+					var got []string
+					assert.FatalError(t, json.Unmarshal(nu, &got))
+					assert.Equals(t, got, []string{otherID})
+					return nu, true, nil
+				},
+			}
+
+			db := &DB{db: mock}
+			err := db.DeleteExternalAccountKey(context.Background(), provID, keyID)
+			if tt.wantErr != "" {
+				if assert.NotNil(t, err) {
+					assert.HasPrefix(t, err.Error(), tt.wantErr)
+				}
+			} else {
+				assert.FatalError(t, err)
+			}
+			assert.Equals(t, referenceDeletes, tt.wantReferenceDel)
+			assert.Equals(t, keyDeletes, tt.wantKeyDel)
+			assert.Equals(t, provisionerCAS, tt.wantProvisionerCAS)
 		})
 	}
 }
@@ -975,7 +1074,7 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 					MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							assert.Equals(t, old, nil)
 							return nu, true, nil
 						case string(externalAccountKeyTable):
@@ -1001,7 +1100,7 @@ func TestDB_CreateExternalAccountKey(t *testing.T) {
 					MCmpAndSwap: func(bucket, key, old, nu []byte) ([]byte, bool, error) {
 						switch string(bucket) {
 						case string(externalAccountKeyIDsByReferenceTable):
-							assert.Equals(t, string(key), ref)
+							assert.Equals(t, string(key), provID+"."+ref)
 							assert.Equals(t, old, nil)
 							return nu, true, nil
 						case string(externalAccountKeyTable):

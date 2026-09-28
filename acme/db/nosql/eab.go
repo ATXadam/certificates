@@ -147,8 +147,24 @@ func (db *DB) DeleteExternalAccountKey(ctx context.Context, provisionerID, keyID
 	}
 
 	if dbeak.Reference != "" {
-		if err := db.db.Del(externalAccountKeyIDsByReferenceTable, []byte(referenceKey(provisionerID, dbeak.Reference))); err != nil {
-			return errors.Wrapf(err, "error deleting ACME EAB Key reference with Key ID %s and reference %s", keyID, dbeak.Reference)
+		referenceIndexKey := []byte(referenceKey(provisionerID, dbeak.Reference))
+		data, err := db.db.Get(externalAccountKeyIDsByReferenceTable, referenceIndexKey)
+		switch {
+		case nosqlDB.IsErrNotFound(err):
+			// The selected KID is authoritative. A missing reference index can
+			// result from partially-created or historical orphaned EAB state.
+		case err != nil:
+			return errors.Wrapf(err, "error loading ACME EAB Key reference with Key ID %s and reference %s", keyID, dbeak.Reference)
+		default:
+			var current dbExternalAccountKeyReference
+			if err := json.Unmarshal(data, &current); err != nil {
+				return errors.Wrapf(err, "error unmarshaling ACME EAB Key reference with Key ID %s and reference %s", keyID, dbeak.Reference)
+			}
+			if current.ExternalAccountKeyID == keyID {
+				if err := db.db.Del(externalAccountKeyIDsByReferenceTable, referenceIndexKey); err != nil && !nosqlDB.IsErrNotFound(err) {
+					return errors.Wrapf(err, "error deleting ACME EAB Key reference with Key ID %s and reference %s", keyID, dbeak.Reference)
+				}
+			}
 		}
 	}
 	if err := db.db.Del(externalAccountKeyTable, []byte(keyID)); err != nil {
