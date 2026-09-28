@@ -364,6 +364,13 @@ func (m *mockSignAuth) GetBackdate() *time.Duration {
 	return nil
 }
 
+type testHTTPStatusError struct {
+	status int
+}
+
+func (e testHTTPStatusError) Error() string   { return "rate limited" }
+func (e testHTTPStatusError) HTTPStatus() int { return e.status }
+
 func TestOrder_Finalize(t *testing.T) {
 	mustSigner := func(kty, crv string, size int) crypto.Signer {
 		s, err := keyutil.GenerateSigner(kty, crv, size)
@@ -598,6 +605,30 @@ func TestOrder_Finalize(t *testing.T) {
 					},
 				},
 				err: NewErrorISE("error creating template options from ACME provisioner: error unmarshaling template data: invalid character 'o' in literal false (expecting 'a')"),
+			}
+		},
+		"fail/error-ca-rate-limit": func(t *testing.T) test {
+			now := clock.Now()
+			o := &Order{
+				ID: "oID", AccountID: "accID", Status: StatusReady,
+				ExpiresAt:        now.Add(5 * time.Minute),
+				AuthorizationIDs: []string{"a"},
+				Identifiers:      []Identifier{{Type: "dns", Value: "foo.internal"}},
+			}
+			csr := &x509.CertificateRequest{DNSNames: []string{"foo.internal"}}
+			return test{
+				o: o, csr: csr,
+				prov: &MockProvisioner{
+					MauthorizeSign: func(context.Context, string) ([]provisioner.SignOption, error) { return nil, nil },
+					MgetOptions:    func() *provisioner.Options { return nil },
+				},
+				ca: &mockSignAuth{signWithContext: func(context.Context, *x509.CertificateRequest, provisioner.SignOptions, ...provisioner.SignOption) ([]*x509.Certificate, error) {
+					return nil, testHTTPStatusError{status: 429}
+				}},
+				db: &MockDB{MockGetAuthorization: func(context.Context, string) (*Authorization, error) {
+					return &Authorization{ID: "a", Status: StatusValid}, nil
+				}},
+				err: NewError(ErrorRateLimitedType, "certificate issuance rate limited"),
 			}
 		},
 		"fail/error-ca-sign": func(t *testing.T) test {

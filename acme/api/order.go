@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -755,7 +756,12 @@ func startAsyncFinalization(ctx context.Context, db acme.DB, orderID string, csr
 				"identifiers", bgOrder.Identifiers, "result", "failure", "reason", "issuer_finalization_failed",
 			)
 			bgOrder.Status = acme.StatusInvalid
-			bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
+			var acmeErr *acme.Error
+			if errors.As(err, &acmeErr) && acmeErr.Type == acme.ErrorRateLimitedType.String() {
+				bgOrder.Error = acmeErr
+			} else {
+				bgOrder.Error = acme.NewError(acme.ErrorServerInternalType, "certificate finalization failed")
+			}
 			bgOrder.CSR = nil
 			bgOrder.Trusted = false
 			if updateErr := db.UpdateOrder(bgCtx, bgOrder); updateErr != nil {
